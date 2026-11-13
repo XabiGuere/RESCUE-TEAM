@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rescue Team</title>
+<style>
+:root{--glass:rgba(12,15,22,.78);--line:rgba(255,255,255,.1);--text:#eef1f6;--muted:#9aa3b5;--fire:#ff6a2a;--ok:#4fd18b;--warn:#ffc04d;--bad:#ff4d5e;--water:#4db8ff}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden;background:#0a0c10;color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:13px;user-select:none;-webkit-user-select:none}
+#c{position:fixed;inset:0;width:100%;height:100%;display:block;cursor:crosshair}
+.glass{background:var(--glass);border:1px solid var(--line);border-radius:12px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);box-shadow:0 8px 30px rgba(0,0,0,.35)}
+button{font:inherit;color:var(--text);background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:8px;padding:6px 10px;cursor:pointer}
+button:hover{background:rgba(255,255,255,.12)}
+button.on{background:var(--fire);border-color:var(--fire);color:#160800;font-weight:700}
+#top{position:fixed;top:10px;left:10px;right:10px;display:flex;gap:10px;align-items:stretch;pointer-events:none;flex-wrap:wrap}
+#top>*{pointer-events:auto}
+.blk{padding:8px 12px;display:flex;align-items:center;gap:10px}
+.big{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums}
+.lab{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted)}
+#title{font-weight:900;letter-spacing:.18em;color:var(--fire)}
+#compass{width:46px;height:46px}
+#speed button{padding:5px 9px}
+#stats{margin-left:auto;display:flex;gap:14px}
+.st{display:flex;flex-direction:column;align-items:flex-end}
+.dmg{width:120px;height:6px;border-radius:3px;background:rgba(255,255,255,.1);overflow:hidden;margin-top:3px}
+.dmg i{display:block;height:100%;background:linear-gradient(90deg,var(--warn),var(--bad));width:0}
+#log{position:fixed;top:84px;right:10px;width:330px;display:flex;flex-direction:column;gap:6px;pointer-events:none}
+.msg{padding:7px 10px;border-radius:9px;background:var(--glass);border:1px solid var(--line);border-left:3px solid var(--muted);animation:in .3s ease;line-height:1.35}
+.msg.warn{border-left-color:var(--warn)}.msg.bad{border-left-color:var(--bad)}.msg.ok{border-left-color:var(--ok)}.msg.info{border-left-color:var(--water)}
+@keyframes in{from{opacity:0;transform:translateX(20px)}}
+#units{position:fixed;left:10px;bottom:10px;display:flex;flex-direction:column;gap:5px;width:230px;max-height:calc(100vh - 300px);overflow-y:auto;scrollbar-width:thin}
+.uc{padding:6px 9px;cursor:pointer;display:grid;grid-template-columns:28px 1fr;gap:2px 8px;align-items:center}
+.uc.sel{border-color:var(--fire);box-shadow:0 0 0 1px var(--fire)}
+.uc .ic{font-size:20px;grid-row:span 3}
+.uc .nm{font-weight:700}.uc .ss{color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bars{display:flex;gap:4px}.bar{flex:1;height:5px;border-radius:3px;background:rgba(255,255,255,.1);overflow:hidden}
+.bar i{display:block;height:100%}.bar.w i{background:var(--water)}.bar.h i{background:var(--ok)}
+#panel{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);min-width:300px;max-width:min(520px,calc(100vw - 500px));padding:10px 14px;display:none}
+#panel h3{margin:0 0 4px;font-size:15px;padding-right:26px}
+#panel .x{position:absolute;top:6px;right:6px;width:26px;height:26px;padding:0;border-radius:7px;line-height:1;font-size:15px;color:var(--muted)}
+#panel .x:hover{color:var(--text)}
+#panel p{margin:3px 0;color:#c9cfdb;line-height:1.4}
+#panel .row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+#panel .act{background:var(--fire);border-color:var(--fire);color:#160800;font-weight:700}
+#panel .act[disabled]{opacity:.4;cursor:default}
+#hover{position:fixed;left:250px;bottom:12px;color:var(--muted);font-size:11px;text-shadow:0 1px 2px #000;pointer-events:none}
+#mm{position:fixed;right:10px;bottom:10px;padding:6px}
+#mm canvas{display:block;width:190px;height:190px;border-radius:8px;cursor:pointer}
+#labels{position:fixed;inset:0;pointer-events:none;overflow:hidden}
+.lbl{position:absolute;transform:translate(-50%,-100%);white-space:nowrap;padding:2px 7px;border-radius:7px;background:rgba(10,12,18,.72);border:1px solid var(--line);font-size:11px;pointer-events:auto;cursor:pointer;text-shadow:0 1px 1px #000}
+.lbl.town{font-size:12px;font-weight:700}
+.lbl.alarm{border-color:var(--bad);color:#ffd0d4;animation:blink 1s infinite}
+.lbl.danger{border-color:var(--warn)}
+.lbl.sel{border-color:var(--fire);box-shadow:0 0 0 1px var(--fire)}
+.lbl.gone{opacity:.45}
+@keyframes blink{50%{background:rgba(120,10,20,.8)}}
+.ov{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(5,6,10,.6);backdrop-filter:blur(4px);z-index:20;padding:16px}
+.ov.show{display:flex}
+.card{max-width:720px;width:100%;padding:26px;max-height:calc(100vh - 32px);overflow:auto}
+.card h1{margin:0;font-size:40px;letter-spacing:.12em;font-weight:900;background:linear-gradient(90deg,#ffd36b,#ff6a2a,#ff3b3b);-webkit-background-clip:text;background-clip:text;color:transparent}
+.card h2{margin:0 0 8px}
+.card p{color:#c9cfdb;line-height:1.5}
+.lvls{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:14px 0}
+.lvls button{padding:10px 6px;text-align:center;line-height:1.3}
+.lvls button b{display:block;font-size:20px}
+.lvls button small{color:var(--muted);font-size:10px}
+.lvls button.on small{color:#3a1500}
+.lvls button[disabled]{opacity:.4;cursor:default}
+.mode{color:var(--warn);font-weight:700}
+#ovShop{z-index:25}
+.card.wide{max-width:960px}
+.card h4{margin:14px 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted)}
+.shop{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:8px}
+.item{display:grid;grid-template-columns:34px 1fr auto;gap:10px;align-items:center;padding:10px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.03)}
+.item .iic{font-size:26px;text-align:center}
+.item p{margin:2px 0 0;font-size:11.5px;color:var(--muted);line-height:1.35}
+.item .lv{font-size:11px;color:var(--warn);margin-left:6px;font-weight:700}
+.item button{white-space:nowrap;min-width:92px}
+.item button.buy{background:var(--warn);border-color:var(--warn);color:#1a1000;font-weight:700}
+.item button[disabled]{opacity:.5;cursor:default}
+.item.locked{opacity:.55}
+.xpTot{font-weight:800;color:var(--warn)}
+#coach{position:fixed;left:50%;top:96px;transform:translateX(-50%);width:min(460px,calc(100vw - 20px));padding:12px 16px;display:none;z-index:6;border-color:rgba(255,192,77,.5)}
+#coach.show{display:block;animation:in .3s ease}
+#coach.ok{border-color:var(--ok);box-shadow:0 0 0 2px var(--ok)}
+#coach .cs{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:var(--warn);font-weight:700}
+#coach p{margin:6px 0 8px;line-height:1.45}
+#coach .row{display:flex;gap:8px;justify-content:flex-end}
+#coach .row button{font-size:12px;padding:4px 9px}
+.hl{outline:2px solid var(--warn)!important;outline-offset:3px;animation:hlp 1s ease-in-out infinite}
+@keyframes hlp{50%{outline-color:transparent}}
+.help{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;font-size:12px;color:#c9cfdb;margin:10px 0}
+.help b{color:var(--text)}
+.go{background:linear-gradient(90deg,#ff8a3a,#ff4d2a);border:none;color:#1a0700;font-weight:800;font-size:16px;padding:11px 26px}
+.res{display:grid;grid-template-columns:1fr 1fr;gap:6px 20px;margin:12px 0}
+.res div{display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:4px 0}
+.xp{font-size:22px;font-weight:800;color:var(--warn);margin:8px 0}
+#loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--muted);z-index:30;background:#0a0c10}
+@media (max-width:900px){#log{width:240px}#units{width:190px}#panel{left:10px;transform:none;min-width:0;max-width:calc(100vw - 270px);bottom:auto;top:130px}#hover{display:none}}
+@media (max-width:560px){#log{width:calc(50vw - 15px)}#panel{max-width:calc(50vw - 15px)}}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="labels"></div>
+
+<div id="top">
+  <div class="glass blk"><div><div id="title">RESCUE TEAM</div><div class="lab" id="lvlLab">Nivel 1</div></div></div>
+  <div class="glass blk"><span id="sunIc" style="font-size:22px">☀️</span><div><div class="big" id="clock">14:00</div><div class="lab" id="dayLab">Tarde</div></div></div>
+  <div class="glass blk"><span id="wxIc" style="font-size:22px">☀️</span><div><div class="big" id="temp">30 °C</div><div class="lab" id="hum">Humedad 20%</div></div></div>
+  <div class="glass blk">
+    <svg id="compass" viewBox="-50 -50 100 100"><circle r="46" fill="rgba(255,255,255,.05)" stroke="rgba(255,255,255,.2)"/><text id="cN" x="0" y="-32" fill="#ff7b7b" font-size="15" font-weight="700" text-anchor="middle" dominant-baseline="middle">N</text><g id="wArrow"><path d="M0 -34 L11 -8 L4 -8 L4 30 L-4 30 L-4 -8 L-11 -8 Z" fill="#7cc8ff"/></g></svg>
+    <div><div class="big" id="wind">20 km/h</div><div class="lab" id="windDir">Viento del O</div></div>
+  </div>
+  <div class="glass blk" id="speed"><button data-s="0" title="Pausa (espacio)">⏸</button><button data-s="1" class="on">▶</button><button data-s="2">x2</button><button data-s="4">x4</button></div>
+  <div class="glass blk" id="stats">
+    <div class="st"><span class="lab">Ardiendo</span><span class="big" id="sFire">0 ha</span></div>
+    <div class="st"><span class="lab">Quemado</span><span class="big" id="sBurn">0 ha</span></div>
+    <div class="st"><span class="lab">Casas perdidas</span><span class="big" id="sHouse">0</span></div>
+    <div class="st"><span class="lab">Fauna muerta</span><span class="big" id="sFauna">0</span></div>
+    <div class="st"><span class="lab">Daños</span><span class="big" id="sDmg">0 €</span><div class="dmg"><i id="dmgBar"></i></div></div>
+  </div>
+</div>
+<div id="log"></div>
+<div id="units"></div>
+<div id="hover"></div>
+<div id="panel" class="glass"></div>
+<div id="coach" class="glass"></div>
+<div id="mm" class="glass"><canvas id="mmc" width="190" height="190"></canvas></div>
+
+<div class="ov show" id="ovStart"><div class="card glass">
+  <h1>RESCUE TEAM</h1>
+  <p>Un incendio forestal acaba de empezar. Coordina a los bomberos, evacúa los pueblos, saca al ganado y no dejes que nadie muera. El fuego avanza según la vegetación, la pendiente, la humedad y un viento que puede cambiar en cualquier momento.</p>
+  <div class="lvls" id="lvls"></div>
+  <div class="help">
+    <div><b>Clic</b> en una autobomba → seleccionarla</div>
+    <div><b>Clic</b> con ella seleccionada → ir / atacar el fuego / repostar</div>
+    <div><b>Arrastrar</b> con botón izquierdo → mover el mapa</div>
+    <div><b>Arrastrar</b> con botón derecho → girar e inclinar la vista</div>
+    <div><b>Rueda</b> → zoom (de cerca la cámara baja a ras de suelo)</div>
+    <div><b>Clic derecho</b> → deseleccionar · <b>Espacio</b> → pausa</div>
+    <div><b>Clic en un pueblo</b> → activar la alarma de evacuación</div>
+    <div><b>Clic en una granja</b> → enviar el camión de ganado</div>
+    <div><b>Brigada / bulldozer</b> → «Trazar cortafuegos»: clic en el inicio y en el final</div>
+    <div><b>Helicóptero / hidroavión</b> → clic en el fuego: hacen rotaciones solos</div>
+    <div><b>Clic en una línea eléctrica</b> → pedir el corte de tensión</div>
+    <div><b>Clic derecho</b> con un cortafuegos a medias → cancelar</div>
+  </div>
+  <p style="font-size:12px">Pierdes si muere algún civil o bombero, o si los daños superan el límite del nivel. Ganas cuando el fuego queda totalmente extinguido. Cada victoria da XP para comprar medios y mejoras en el hangar, y desbloquea el nivel siguiente.</p>
+  <div style="display:flex;gap:10px;justify-content:center;align-items:center;margin-top:10px;flex-wrap:wrap"><button id="bShop">🛒 Hangar y mejoras · <span class="xpTot" id="xpTot">0 XP</span></button><button id="bTut">🎓 Tutorial</button><button class="go" id="bStart">Empezar</button></div>
+</div></div>
+
+<div class="ov" id="ovEnd"><div class="card glass" style="max-width:560px;text-align:center">
+  <h2 id="endT" style="font-size:28px">Incendio extinguido</h2>
+  <p id="endP"></p>
+  <div class="res" id="endR" style="text-align:left"></div>
+  <div class="xp" id="endX"></div>
+  <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap"><button id="bShop2">🛒 Hangar</button><button id="bRetry">Repetir este mapa</button><button id="bNew">Mapa nuevo</button><button class="go" id="bNext">Siguiente nivel</button></div>
+</div></div>
+
+<div class="ov" id="ovShop"><div class="card glass wide">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2 style="margin:0">🛒 Hangar y mejoras</h2><div>Experiencia disponible: <span class="xpTot" id="shopXp">0 XP</span></div></div>
+  <p style="margin:6px 0 0;font-size:12px">Lo que compres se queda para todas las partidas. Algunos medios se desbloquean al llegar a niveles superiores.</p>
+  <h4>Medios</h4><div class="shop" id="shopUnits"></div>
+  <h4>Mejoras</h4><div class="shop" id="shopUpg"></div>
+  <div style="display:flex;justify-content:space-between;margin-top:16px"><button id="bReset" style="font-size:11px;color:var(--muted)">Reiniciar progreso</button><button class="go" id="bShopClose">Volver</button></div>
+</div></div>
+
+<div id="loading">Cargando motor 3D…</div>
+<script type="module" src="juego.js"></script>
+</body>
+</html>
