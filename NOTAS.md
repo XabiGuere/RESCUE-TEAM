@@ -43,6 +43,20 @@ Juego 3D de extinción de incendios forestales en el navegador, hecho con Three.
 - **Progreso:** `localStorage['rt-prof']` = `{ xp, maxLvl, own }`. La tienda se define en `SHOP` y se pinta con `renderShop`.
 - **Depuración:** `window.RT`. Con `RT.sim(segundos)` se simula sin depender de `requestAnimationFrame`.
 
+## Gráficos (versión mejorada)
+- **Terreno:** malla 3 veces más fina que la rejilla del fuego. `hAt` aplica Catmull-Rom más microrrelieve (`AMP`, `detN`). Los colores de cada celda van en la textura `colTex`, en la que el canal alfa es el brillo de las brasas. El detalle (hierba, tierra, roca, ceniza) sale de la textura repetible `detTex`.
+- **Árboles:** modelos fusionados (`pineGeo`, `oakGeo`, `shrubGeo`) con colores por vértice y balanceo con el viento. Se agrupan por zonas de 32×32 celdas para que no se dibujen los que no se ven. Lejos se cambian a versiones simples (`pineLo`, `oakLo`…).
+- **Agua y cielo:** sombreadores propios (`WATER_FS` y la esfera `sky`) con oleaje, reflejos, espuma, disco solar y luna.
+- **Fuego:** las partículas tienen formas de llama y de humo. Además hay chispas, ceniza a sotavento, brasas que siguen rojas un rato (`smold`) y bruma parda con mucho fuego.
+- **Posproceso:** `EffectComposer` encadena el render, el resplandor (`UnrealBloomPass`) y `OutputPass`. Las partículas escriben el color en lineal (`pow 2.2`) porque `OutputPass` lo convierte después.
+- **Rendimiento:** sombras recalculadas cada 0,5 s y botón HD (calidad alta o media). La calidad baja sola si el equipo va por debajo de unos 22 fps. En una gráfica Intel UHD un fotograma tarda unos 12 ms en calidad alta.
+- **Tutorial guiado:** `startTutorial`, con 11 pasos que se comprueban solos.
+- **Móvil:** `IS_TOUCH` añade la clase `touch` a `<html>`.
+  - Gestos: un dedo mueve el mapa, pellizcar hace zoom, girar dos dedos cambia el rumbo y deslizar dos dedos inclina la vista. Se gestionan con `ptrs` y `pinch`.
+  - `tactil()` cambia «clic» por «toca» en paneles y mensajes.
+  - La interfaz compacta está en `@media (max-width:640px)` de index.html.
+  - En móvil la partida empieza en calidad media.
+
 ## Fases
 1. ✅ Mundo, fuego, clima, autobombas y cámara.
 2. ✅ Pueblos y evacuación, casas aisladas, granjas y ganado, fauna salvaje, noche y lluvia.

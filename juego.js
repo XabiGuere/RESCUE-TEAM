@@ -1,7 +1,13 @@
 // Rescue Team — fases 1 y 2
 import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 const $ = id => document.getElementById(id);
+const IS_TOUCH = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0 && !matchMedia('(pointer: fine)').matches;
+if (IS_TOUCH) document.documentElement.classList.add('touch');
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -29,7 +35,7 @@ const N = 128, CELL = 6, HALF = (N - 1) * CELL / 2, HMAX = 150, NN = N * N;
 const V = { WATER: 0, ROCK: 1, GRASS: 2, SHRUB: 3, PINE: 4, OAK: 5, CROP: 6, TOWN: 7, ROAD: 8 };
 const VP = [
   { n: 'Agua', spread: 0, burn: 0, col: [.16, .3, .4], cost: Infinity, dmg: 0 },
-  { n: 'Roca', spread: 0, burn: 0, col: [.5, .48, .45], cost: Infinity, dmg: 0 },
+  { n: 'Roca', spread: 0, burn: 0, col: [.4, .37, .33], cost: Infinity, dmg: 0 },
   { n: 'Pasto seco', spread: .95, burn: 16, col: [.64, .6, .33], cost: 2.2, dmg: 500 },
   { n: 'Matorral', spread: .72, burn: 28, col: [.45, .46, .25], cost: 3.5, dmg: 1200, spot: .25 },
   { n: 'Pinar', spread: .6, burn: 55, col: [.24, .33, .17], cost: 5, dmg: 2500, spot: 1 },
@@ -82,6 +88,7 @@ const DIRS = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'];
 
 let H, VEG, FUEL, STATE, INT, BT, WET, MOI, ROADF, AFF, DIST, BC;
 function alloc() {
+  AMP = null;
   H = new Float32Array(NN); VEG = new Uint8Array(NN); FUEL = new Float32Array(NN); STATE = new Uint8Array(NN);
   INT = new Float32Array(NN); BT = new Float32Array(NN); WET = new Float32Array(NN); MOI = new Float32Array(NN);
   ROADF = new Uint8Array(NN); AFF = new Uint8Array(NN); DIST = new Uint8Array(NN); BC = new Float32Array(NN * 3);
@@ -97,13 +104,22 @@ function line4(a, b) {
   while (ix < nx || iz < nz) { if ((.5 + ix) / nx < (.5 + iz) / nz) { x += sx; ix++; } else { z += sz; iz++; } out.push(z * N + x); }
   return out;
 }
+// altura suave (Catmull-Rom) + microrrelieve; es la misma función que da forma a la malla 3D
+const cr = (p0, p1, p2, p3, t) => p1 + .5 * t * (p2 - p0 + t * (2 * p0 - 5 * p1 + 4 * p2 - p3 + t * (3 * (p1 - p2) + p3 - p0)));
+let detN = null, AMP = null;
 function hAt(fx, fz) { // altura en coordenadas de celda (flotantes)
   fx = clamp(fx, 0, N - 1.001); fz = clamp(fz, 0, N - 1.001);
-  const x = Math.floor(fx), z = Math.floor(fz), u = fx - x, v = fz - z, i = z * N + x;
-  return lerp(lerp(H[i], H[i + 1], u), lerp(H[i + N], H[i + N + 1], u), v);
+  const x = Math.floor(fx), z = Math.floor(fz), u = fx - x, v = fz - z;
+  const row = zz => { const b = clamp(zz, 0, N - 1) * N; return cr(H[b + clamp(x - 1, 0, N - 1)], H[b + x], H[b + Math.min(x + 1, N - 1)], H[b + Math.min(x + 2, N - 1)], u); };
+  let h = cr(row(z - 1), row(z), row(z + 1), row(z + 2), v);
+  if (AMP) {
+    const i = z * N + x, a = lerp(lerp(AMP[i], AMP[i + 1], u), lerp(AMP[i + N], AMP[i + N + 1], u), v);
+    if (a > .01) h += a * (detN(fx * .9, fz * .9) * 1.5 + detN(fx * 2.4 + 5, fz * 2.4 + 3) * .6);
+  }
+  return h;
 }
 const hWorld = (x, z) => hAt((x + HALF) / CELL, (z + HALF) / CELL);
-const cellWorld = i => new THREE.Vector3(wx(cx(i)), H[i], wx(cz(i)));
+const cellWorld = i => { const x = wx(cx(i)), z = wx(cz(i)); return new THREE.Vector3(x, AMP ? hWorld(x, z) : H[i], z); };
 
 // ───────────── Búsqueda de rutas (A*) ─────────────
 const AG = new Float32Array(NN), AS = new Int32Array(NN), AC = new Int32Array(NN), ACL = new Int32Array(NN);
@@ -157,7 +173,8 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.shadowMap.autoUpdate = false;
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0x9db8d0, 700, 2200);
 const camera = new THREE.PerspectiveCamera(48, 1, 1, 6000);
@@ -169,7 +186,7 @@ sun.shadow.bias = -.0006; sun.shadow.normalBias = 1.2;
 scene.add(sun, sun.target);
 const moon = new THREE.DirectionalLight(0x8fa8ff, 0); moon.position.set(-300, 500, 200); scene.add(moon);
 const fireLights = [0, 1, 2, 3, 4].map(() => { const l = new THREE.PointLight(0xff6a1a, 0, 320, 1.2); scene.add(l); return l; });
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(9000, 9000).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x3b4128, roughness: 1 }));
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(9000, 9000).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x4f5233, roughness: 1 }));
 ground.position.y = -1; ground.receiveShadow = true; scene.add(ground);
 // estrellas
 {
@@ -181,35 +198,124 @@ ground.position.y = -1; ground.receiveShadow = true; scene.add(ground);
 }
 let world = new THREE.Group(); scene.add(world);
 const glowTime = { value: 0 }, glowK = { value: 1 };
+let colTex = null;
+
+// ───────────── Sombreadores (terreno, agua, cielo) ─────────────
+const GLSL_NOISE = `
+float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);vec2 u=f*f*(3.-2.*f);return mix(mix(hash(i),hash(i+vec2(1.,0.)),u.x),mix(hash(i+vec2(0.,1.)),hash(i+vec2(1.,1.)),u.x),u.y);}
+float fbm2(vec2 p){float s=0.,a=.5;for(int i=0;i<4;i++){s+=a*vnoise(p);p*=2.03;a*=.5;}return s;}`;
+// textura de detalle repetible (ruido precalculado: mucho más barato que calcularlo en cada píxel)
+function makeDetailTex() {
+  const S = 256, d = new Uint8Array(S * S * 4);
+  const hsh = (x, y, s) => { const v = Math.sin(x * 127.1 + y * 311.7 + s * 74.7) * 43758.5453; return v - Math.floor(v); };
+  const vn = (x, y, P, s) => { const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi, u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy), m = k => ((k % P) + P) % P;
+    const a = hsh(m(xi), m(yi), s), b = hsh(m(xi + 1), m(yi), s), c = hsh(m(xi), m(yi + 1), s), e = hsh(m(xi + 1), m(yi + 1), s); return lerp(lerp(a, b, u), lerp(c, e, u), v); };
+  const fb = (x, y, P, s) => { let t = 0, a = .5, n = 0; for (let o = 0; o < 4; o++) { t += a * vn(x * P * (1 << o), y * P * (1 << o), P * (1 << o), s + o); n += a; a *= .5; } return t / n; };
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const u = x / S, v = y / S, k = (y * S + x) * 4;
+    d[k] = fb(u, v, 4, 1) * 255; d[k + 1] = fb(u, v, 8, 9) * 255; d[k + 2] = vn(u * 64, v * 64, 64, 17) * 255; d[k + 3] = vn(u * 128, v * 128, 128, 29) * 255;
+  }
+  const t = new THREE.DataTexture(d, S, S, THREE.RGBAFormat); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; t.needsUpdate = true;
+  return t;
+}
+const detTex = makeDetailTex();
+// color del suelo: textura por celda + detalle (hierba, tierra, roca, ceniza)
+const TERRAIN_COLOR = `
+vec2 cc=(vWP.xz+uHalf)/uCell; vec4 tx=texture2D(uCol,(cc+.5)/uN); vec3 base=tx.rgb*tx.rgb;
+vec4 dA=texture2D(uDet,vWP.xz*.0045), dB=texture2D(uDet,vWP.xz*.021+.37), dC=texture2D(uDet,vWP.xz*.06+.71);
+float n1=dA.r, n2=dB.g, n3=dC.b, n4=dC.a;
+float lum=dot(base,vec3(.3,.6,.1));
+vec3 c=base*(.78+.44*n1)*(.9+.2*n2)*(.9+.2*n3)*(.94+.12*n4);
+float veg=clamp((base.g-base.r)*12.,0.,1.);
+c=mix(c,c*vec3(1.12,1.05,.78),smoothstep(.45,.75,n1)*.55*veg);           // manchas de hierba seca
+c=mix(c,c*vec3(.85,.95,.8),(1.-smoothstep(.2,.5,n2))*.35*veg);           // zonas más umbrías
+float dirt=smoothstep(.6,.78,dA.g)*veg;                                    // claros de tierra
+c=mix(c,vec3(.13,.1,.07)*(.8+.4*n3),dirt*.45);
+float steep=(1.-smoothstep(.55,.8,normalize(vWN).y))*step(.01,lum);
+vec3 rock=vec3(.085,.075,.06)*(.65+.7*texture2D(uDet,vec2(vWP.x*.012+vWP.z*.01,vWP.y*.06)).g)*(.8+.4*n3);
+c=mix(c,rock,steep*.7);
+float burnt=(1.-smoothstep(.024,.034,lum))*step(.0001,lum);
+vec3 ash=vec3(.028,.026,.024)*(.55+.9*n2)+vec3(.09,.088,.085)*smoothstep(.62,.85,n3)*n4;
+c=mix(c,ash,burnt*.85);
+diffuseColor.rgb=c;`;
+const WATER_VS = `varying vec3 vWP;
+#include <fog_pars_vertex>
+void main(){vec4 wp=modelMatrix*vec4(position,1.);vWP=wp.xyz;vec4 mvPosition=viewMatrix*wp;gl_Position=projectionMatrix*mvPosition;
+#include <fog_vertex>
+}`;
+const WATER_FS = `varying vec3 vWP;uniform float uTime,uWH,uN,uHalf,uCell,uHmax,uSunI,uDay;uniform vec3 uSun,uSunC,uSky,uZen;uniform sampler2D uHt;
+#include <fog_pars_fragment>
+${GLSL_NOISE}
+void main(){vec2 p=vWP.xz;float t=uTime;vec2 g=vec2(0.);
+ vec2 d1=vec2(.8,.6),d2=vec2(-.4,.9),d3=vec2(.95,-.3),d4=vec2(-.7,-.7);
+ g+=d1*cos(dot(p,d1)*.21+t*1.1)*.5; g+=d2*cos(dot(p,d2)*.37+t*1.6)*.35; g+=d3*cos(dot(p,d3)*.71+t*2.3)*.2; g+=d4*cos(dot(p,d4)*1.3+t*3.1)*.1;
+ g+=vec2(vnoise(p*.6+t*.4)-.5,vnoise(p*.6-t*.35+9.)-.5)*.6;
+ vec3 n=normalize(vec3(-g.x*.22,1.,-g.y*.22));
+ vec3 v=normalize(cameraPosition-vWP);
+ float fr=.03+.97*pow(1.-max(dot(n,v),0.),5.);
+ vec3 r=reflect(-v,n);vec3 sky=mix(uSky,uZen,clamp(r.y*1.5,0.,1.));
+ float th=texture2D(uHt,((p+uHalf)/uCell+.5)/uN).r*uHmax;float depth=max(uWH-th,0.);
+ float sh=exp(-depth*.22);
+ vec3 body=mix(vec3(.012,.045,.06),vec3(.07,.16,.15),sh)*(.25+.75*uDay);
+ vec3 col=mix(body,sky,fr*.9);
+ float spec=pow(max(dot(r,uSun),0.),220.)*uSunI;col+=uSunC*spec*4.;
+ float foam=(1.-smoothstep(.05,.7,depth))*smoothstep(.55,.8,vnoise(p*.45+vec2(t*.25,-t*.2)));
+ col=mix(col,vec3(.75,.8,.8)*(.3+.7*uDay),foam*.3);
+ gl_FragColor=vec4(col,mix(.97,.55,sh*sh));
+ #include <fog_fragment>
+}`;
+const waterU = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uTime: { value: 0 }, uWH: { value: 0 }, uN: { value: N }, uHalf: { value: HALF }, uCell: { value: CELL }, uHmax: { value: HMAX }, uSunI: { value: 1 }, uDay: { value: 1 }, uSun: { value: new THREE.Vector3(0, 1, 0) }, uSunC: { value: new THREE.Color(1, .95, .85) }, uSky: { value: new THREE.Color() }, uZen: { value: new THREE.Color() }, uHt: { value: null } }]);
+// cielo: degradado horizonte-cénit, disco solar con halo y luna
+const skyU = { uHor: { value: new THREE.Color() }, uZen: { value: new THREE.Color() }, uSun: { value: new THREE.Vector3(0, 1, 0) }, uSunC: { value: new THREE.Color(1, .9, .7) }, uMoon: { value: new THREE.Vector3(-.4, .7, .3).normalize() }, uDay: { value: 1 }, uNight: { value: 0 }, uCloud: { value: 0 } };
+const sky = new THREE.Mesh(new THREE.SphereGeometry(4500, 32, 16), new THREE.ShaderMaterial({
+  uniforms: skyU, side: THREE.BackSide, depthWrite: false, fog: false,
+  vertexShader: 'varying vec3 vD;void main(){vD=normalize(position);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
+  fragmentShader: `varying vec3 vD;uniform vec3 uHor,uZen,uSun,uSunC,uMoon;uniform float uDay,uNight,uCloud;
+  void main(){vec3 d=normalize(vD);float h=d.y;vec3 c=mix(uHor,uZen,pow(clamp(h,0.,1.),.45));c=mix(c,uHor*.7,clamp(-h*4.,0.,1.));
+  float s=max(dot(d,uSun),0.);c+=uSunC*(pow(s,900.)*25.*(1.-uCloud*.8)+pow(s,10.)*.35*uDay+pow(s,3.)*.08*uDay);
+  float m=max(dot(d,uMoon),0.);c+=vec3(.85,.9,1.)*(pow(m,3000.)*4.+pow(m,40.)*.05)*uNight*(1.-uCloud);
+  gl_FragColor=vec4(c,1.);}`
+}));
+sky.renderOrder = -10; sky.frustumCulled = false; scene.add(sky);
 
 // Partículas (llamas, humo, agua, nubes)
-const PVS = `attribute float aSize;attribute vec4 aCol;varying vec4 vCol;uniform float uScale;
-void main(){vCol=aCol;vec4 mv=modelViewMatrix*vec4(position,1.0);gl_PointSize=min(700.0,aSize*uScale/max(1.0,-mv.z));gl_Position=projectionMatrix*mv;}`;
-const PFS = `varying vec4 vCol;uniform float uSoft;void main(){float d=length(gl_PointCoord-0.5)*2.0;if(d>1.0)discard;float a=pow(1.0-d,uSoft);gl_FragColor=vec4(vCol.rgb,vCol.a*a);}`;
+const PVS = `attribute float aSize,aSeed;attribute vec4 aCol;varying vec4 vCol;varying float vSeed;uniform float uScale;
+void main(){vCol=aCol;vSeed=aSeed;vec4 mv=modelViewMatrix*vec4(position,1.0);gl_PointSize=min(700.0,aSize*uScale/max(1.0,-mv.z));gl_Position=projectionMatrix*mv;}`;
+// modo 0: disco suave (agua, chispas) · 1: lengua de fuego · 2: bocanada de humo con textura
+const PFS = `varying vec4 vCol;varying float vSeed;uniform float uSoft,uMode;
+float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);vec2 u=f*f*(3.-2.*f);return mix(mix(hash(i),hash(i+vec2(1.,0.)),u.x),mix(hash(i+vec2(0.,1.)),hash(i+vec2(1.,1.)),u.x),u.y);}
+void main(){vec2 pc=gl_PointCoord-.5;float a;vec3 c=vCol.rgb;
+ if(uMode<.5){float d=length(pc)*2.;if(d>1.)discard;a=pow(1.-d,uSoft);}
+ else if(uMode<1.5){vec2 q=vec2(pc.x*(1.5-pc.y*1.8),(pc.y-.08)*1.15);float n=vnoise(gl_PointCoord*vec2(3.,2.2)+vSeed*31.);float d=length(q)*2.+(n-.5)*.55;if(d>1.)discard;a=pow(1.-d,uSoft);c=mix(c,vec3(1.,.92,.72),pow(1.-d,2.5)*.75);}
+ else{float n=vnoise(gl_PointCoord*2.6+vSeed*19.)*.6+vnoise(gl_PointCoord*6.+vSeed*7.)*.4;float d=length(pc)*2.+(n-.5)*.75;if(d>1.)discard;a=pow(1.-d,uSoft)*(.55+.7*n);c*=.85+.3*(.5-pc.y)+.15*n;}
+ gl_FragColor=vec4(pow(max(c,0.),vec3(2.2)),vCol.a*a);}`;
 const pScale = { value: 500 };
 class PSys {
-  constructor(max, { add = false, soft = 1.5, buoy = 0, drag = .5, windK = 0, order = 0 }) {
+  constructor(max, { add = false, soft = 1.5, buoy = 0, drag = .5, windK = 0, order = 0, mode = 0 }) {
     this.max = max; this.n = 0; this.o = { buoy, drag, windK };
     const F = k => new Float32Array(max * k);
-    Object.assign(this, { p: F(3), v: F(3), s: F(1), c: F(4), age: F(1), dur: F(1), s0: F(1), s1: F(1), c0: F(3), c1: F(3), a0: F(1) });
+    Object.assign(this, { p: F(3), v: F(3), s: F(1), c: F(4), age: F(1), dur: F(1), s0: F(1), s1: F(1), c0: F(3), c1: F(3), a0: F(1), sd: F(1) });
     const g = this.g = new THREE.BufferGeometry();
     this.ap = new THREE.BufferAttribute(this.p, 3).setUsage(THREE.DynamicDrawUsage);
     this.as = new THREE.BufferAttribute(this.s, 1).setUsage(THREE.DynamicDrawUsage);
     this.ac = new THREE.BufferAttribute(this.c, 4).setUsage(THREE.DynamicDrawUsage);
-    g.setAttribute('position', this.ap); g.setAttribute('aSize', this.as); g.setAttribute('aCol', this.ac);
-    const mat = new THREE.ShaderMaterial({ uniforms: { uScale: pScale, uSoft: { value: soft } }, vertexShader: PVS, fragmentShader: PFS, transparent: true, depthWrite: false, blending: add ? THREE.AdditiveBlending : THREE.NormalBlending });
+    this.asd = new THREE.BufferAttribute(this.sd, 1).setUsage(THREE.DynamicDrawUsage);
+    g.setAttribute('position', this.ap); g.setAttribute('aSize', this.as); g.setAttribute('aCol', this.ac); g.setAttribute('aSeed', this.asd);
+    const mat = new THREE.ShaderMaterial({ uniforms: { uScale: pScale, uSoft: { value: soft }, uMode: { value: mode } }, vertexShader: PVS, fragmentShader: PFS, transparent: true, depthWrite: false, blending: add ? THREE.AdditiveBlending : THREE.NormalBlending });
     this.pts = new THREE.Points(g, mat); this.pts.frustumCulled = false; this.pts.renderOrder = order; scene.add(this.pts);
   }
   add(x, y, z, vx, vy, vz, dur, s0, s1, c0, c1, a) {
     if (this.n >= this.max) return; const i = this.n++, i3 = i * 3;
     this.p[i3] = x; this.p[i3 + 1] = y; this.p[i3 + 2] = z; this.v[i3] = vx; this.v[i3 + 1] = vy; this.v[i3 + 2] = vz;
-    this.age[i] = 0; this.dur[i] = dur; this.s0[i] = s0; this.s1[i] = s1; this.a0[i] = a;
+    this.age[i] = 0; this.dur[i] = dur; this.s0[i] = s0; this.s1[i] = s1; this.a0[i] = a; this.sd[i] = Math.random();
     this.c0[i3] = c0[0]; this.c0[i3 + 1] = c0[1]; this.c0[i3 + 2] = c0[2]; this.c1[i3] = c1[0]; this.c1[i3 + 1] = c1[1]; this.c1[i3 + 2] = c1[2];
   }
   kill(i) {
     const j = --this.n; if (i === j) return; const i3 = i * 3, j3 = j * 3;
     for (const k of ['p', 'v', 'c0', 'c1']) { const a = this[k]; a[i3] = a[j3]; a[i3 + 1] = a[j3 + 1]; a[i3 + 2] = a[j3 + 2]; }
-    for (const k of ['age', 'dur', 's0', 's1', 'a0']) this[k][i] = this[k][j];
+    for (const k of ['age', 'dur', 's0', 's1', 'a0', 'sd']) this[k][i] = this[k][j];
   }
   update(dt, wvx, wvz, ws) {
     const o = this.o, dr = Math.exp(-o.drag * dt);
@@ -225,11 +331,13 @@ class PSys {
       this.c[i4 + 3] = this.a0[i] * (t < .15 ? t / .15 : (1 - t) / .85);
     }
     this.g.setDrawRange(0, this.n);
-    this.ap.needsUpdate = this.as.needsUpdate = this.ac.needsUpdate = true;
+    this.ap.needsUpdate = this.as.needsUpdate = this.ac.needsUpdate = this.asd.needsUpdate = true;
   }
 }
-const smoke = new PSys(3500, { soft: 2.4, buoy: -.4, drag: .25, windK: .35, order: 2 });
-const flames = new PSys(5000, { add: true, soft: 1.6, buoy: 6, drag: 1.2, windK: .8, order: 3 });
+const smoke = new PSys(4000, { soft: 1.8, buoy: -.4, drag: .25, windK: .35, order: 2, mode: 2 });
+const flames = new PSys(5000, { add: true, soft: 1.3, buoy: 6, drag: 1.2, windK: .8, order: 3, mode: 1 });
+const sparks = new PSys(1500, { add: true, soft: 1.2, buoy: 3, drag: .6, windK: .9, order: 3 });
+const ash = new PSys(800, { soft: 1.5, buoy: -1.2, drag: .8, windK: .6, order: 2 });
 const water = new PSys(1500, { soft: 1.4, buoy: -38, drag: .1, order: 4 });
 const clouds = new PSys(90, { soft: 1, drag: 0, windK: .02, order: 5 });
 
@@ -243,7 +351,7 @@ for (let i = 0; i < RAIN_N; i++) { rainPos[i * 6] = rr(-250, 250); rainPos[i * 6
 
 // ───────────── Estado de partida ─────────────
 let G = null, lvlIdx = 0, lastSeed = 0;
-let burning = [], changed = [];
+let burning = [], changed = [], smold = [], glowOn = [], SMO = new Float32Array(NN);
 let terrain, colAttr, glowAttr, cols, glow, trees = [], cellTrees, houseMesh, roofMesh, winMesh, carMesh, wildMesh, stockMeshes = [], selRing, destRing, trunkMesh, previewLine, planLine;
 const ZERO4 = new THREE.Matrix4().makeScale(0, 0, 0);
 
@@ -262,7 +370,7 @@ function generate(seed) {
     H[i] = h; mn = Math.min(mn, h); mx = Math.max(mx, h);
     MOI[i] = clamp(fbm(p3, x * .035, z * .035, 4) * .9 + .5, 0, 1);
   }
-  for (let i = 0; i < NN; i++) H[i] = Math.pow((H[i] - mn) / (mx - mn), 1.4);
+  for (let i = 0; i < NN; i++) H[i] = Math.pow(Math.max(0, (H[i] - mn) / (mx - mn)), 1.4); // max(0): el redondeo a float32 podía dar un negativo y NaN
   for (let pass = 0; pass < 2; pass++) { const c = H.slice(); for (let z = 1; z < N - 1; z++) for (let x = 1; x < N - 1; x++) { const i = z * N + x; H[i] = (c[i] * 4 + c[i - 1] + c[i + 1] + c[i - N] + c[i + N]) / 8; } }
   const sorted = Float32Array.from(H).sort(); const wl = sorted[Math.floor(NN * .07)];
   G.waterH = wl * HMAX + .8;
@@ -397,39 +505,52 @@ function generate(seed) {
 // ───────────── Construcción de la escena ─────────────
 const lin = c => Math.pow(c, 2.2);
 function disposeWorld() {
-  world.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose()); });
+  world.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.userData.hi) { o.userData.hi.dispose(); o.userData.lo.dispose(); } if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose()); });
   scene.remove(world); world = new THREE.Group(); scene.add(world);
 }
 function buildScene() {
   disposeWorld();
-  // terreno
-  const g = new THREE.PlaneGeometry((N - 1) * CELL, (N - 1) * CELL, N - 1, N - 1); g.rotateX(-Math.PI / 2);
-  const pos = g.attributes.position; for (let i = 0; i < NN; i++) pos.setY(i, H[i]);
+  // microrrelieve: casi plano en pueblos, carreteras y agua; marcado en roca
+  detN = perlin(lastSeed + 77); AMP = new Float32Array(NN);
+  for (let i = 0; i < NN; i++) { const v = VEG[i]; AMP[i] = ROADF[i] || v === V.TOWN || v === V.WATER ? .05 : v === V.ROCK ? 1.3 : v === V.CROP ? .25 : .7; }
+  { const a = AMP.slice(); for (let z = 1; z < N - 1; z++) for (let x = 1; x < N - 1; x++) { const i = z * N + x; AMP[i] = (a[i] * 4 + a[i - 1] + a[i + 1] + a[i - N] + a[i + N]) / 8; } }
+  // terreno: malla 3 veces más fina que la rejilla del fuego; los colores van en una textura por celda
+  const RES = 3, S = (N - 1) * RES;
+  const g = new THREE.PlaneGeometry((N - 1) * CELL, (N - 1) * CELL, S, S); g.rotateX(-Math.PI / 2);
+  const pos = g.attributes.position; for (let i = 0; i < pos.count; i++) pos.setY(i, hWorld(pos.getX(i), pos.getZ(i)));
   g.computeVertexNormals();
-  cols = new Float32Array(NN * 3); glow = new Float32Array(NN);
+  cols = new Uint8Array(NN * 4); glow = cols;
   const nz = perlin(lastSeed + 99);
   for (let i = 0; i < NN; i++) {
     const c = VP[VEG[i]].col, x = cx(i), z = cz(i);
     const n = 1 + fbm(nz, x * .15, z * .15, 3) * .35 + (Math.random() - .5) * .06;
     let r = c[0] * n, gg = c[1] * n, b = c[2] * n;
-    const ny = g.attributes.normal.getY(i);
-    if (VEG[i] !== V.WATER && VEG[i] !== V.ROAD && ny < .82) { const k = smooth(.82, .6, ny); r = lerp(r, .46, k); gg = lerp(gg, .43, k); b = lerp(b, .39, k); }
+    const gx = (H[z * N + Math.min(x + 1, N - 1)] - H[z * N + Math.max(x - 1, 0)]) / (2 * CELL), gz = (H[Math.min(z + 1, N - 1) * N + x] - H[Math.max(z - 1, 0) * N + x]) / (2 * CELL), ny = 1 / Math.sqrt(1 + gx * gx + gz * gz);
+    if (VEG[i] !== V.WATER && VEG[i] !== V.ROAD && ny < .82) { const k = smooth(.82, .6, ny); r = lerp(r, .36, k); gg = lerp(gg, .33, k); b = lerp(b, .28, k); }
+    if (VEG[i] === V.WATER) { r *= .55; gg *= .6; b *= .55; } // fondo del embalse
     BC[i * 3] = lin(r); BC[i * 3 + 1] = lin(gg); BC[i * 3 + 2] = lin(b);
   }
+  colTex = new THREE.DataTexture(cols, N, N, THREE.RGBAFormat); colTex.magFilter = colTex.minFilter = THREE.LinearFilter; colTex.generateMipmaps = false;
   for (let i = 0; i < NN; i++) cellColor(i);
-  colAttr = new THREE.BufferAttribute(cols, 3).setUsage(THREE.DynamicDrawUsage); g.setAttribute('color', colAttr);
-  glowAttr = new THREE.BufferAttribute(glow, 1).setUsage(THREE.DynamicDrawUsage); g.setAttribute('aGlow', glowAttr);
-  const tm = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .95, metalness: 0 });
+  colTex.needsUpdate = true;
+  const tm = new THREE.MeshStandardMaterial({ roughness: .97, metalness: 0 });
   tm.onBeforeCompile = sh => {
-    sh.uniforms.uTime = glowTime; sh.uniforms.uGlowK = glowK;
-    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float aGlow;\nvarying float vGlow;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvGlow=aGlow;');
-    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vGlow;\nuniform float uTime;\nuniform float uGlowK;')
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance+=vec3(1.0,0.28,0.04)*vGlow*uGlowK*(1.0+0.35*sin(uTime*9.0+vViewPosition.x*0.4+vViewPosition.y*0.3));');
+    Object.assign(sh.uniforms, { uTime: glowTime, uGlowK: glowK, uCol: { value: colTex }, uDet: { value: detTex }, uN: { value: N }, uHalf: { value: HALF }, uCell: { value: CELL } });
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP;\nvarying vec3 vWN;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWP=(modelMatrix*vec4(transformed,1.0)).xyz;\nvWN=normal;');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP;\nvarying vec3 vWN;\nuniform float uTime,uGlowK,uN,uHalf,uCell;\nuniform sampler2D uCol,uDet;\n')
+      .replace('#include <color_fragment>', TERRAIN_COLOR)
+      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n{vec2 P=vWP.xz*.06+.71;float h0=dC.a,hx=texture2D(uDet,P+vec2(.004,0.)).a,hz=texture2D(uDet,P+vec2(0.,.004)).a;vec3 gr=vec3((h0-hx)*3.,0.,(h0-hz)*3.);normal=normalize(normal+(viewMatrix*vec4(gr,0.)).xyz*(.3+.4*steep));}')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance+=vec3(1.0,0.3,0.05)*tx.a*uGlowK*(.55+.9*n3)*(1.0+0.35*sin(uTime*9.0+vWP.x*0.4+vWP.z*0.3));');
   };
   terrain = new THREE.Mesh(g, tm); terrain.receiveShadow = true; world.add(terrain);
-  // agua
-  const wm = new THREE.Mesh(new THREE.PlaneGeometry((N - 1) * CELL, (N - 1) * CELL).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x2a5d78, roughness: .12, metalness: .2, transparent: true, opacity: .86 }));
-  wm.position.y = G.waterH; world.add(wm);
+  // agua: oleaje, reflejos del cielo, brillo del sol y espuma en la orilla
+  const hd = new Uint8Array(NN * 4); for (let i = 0; i < NN; i++) hd[i * 4] = clamp(Math.round(H[i] / HMAX * 255), 0, 255);
+  const hTex = new THREE.DataTexture(hd, N, N, THREE.RGBAFormat); hTex.magFilter = hTex.minFilter = THREE.LinearFilter; hTex.needsUpdate = true;
+  waterU.uHt.value = hTex; waterU.uWH.value = G.waterH;
+  const wmat = new THREE.ShaderMaterial({ uniforms: waterU, vertexShader: WATER_VS, fragmentShader: WATER_FS, transparent: true, fog: true, depthWrite: false });
+  const wm = new THREE.Mesh(new THREE.PlaneGeometry((N - 1) * CELL, (N - 1) * CELL, 1, 1).rotateX(-Math.PI / 2), wmat);
+  wm.position.y = G.waterH; wm.renderOrder = 1; world.add(wm);
   // árboles
   buildTrees();
   // casas
@@ -511,44 +632,115 @@ function buildScene() {
   clouds.n = 0;
   for (let k = 0; k < 70; k++) clouds.add(rr(-HALF * 1.4, HALF * 1.4), rr(330, 420), rr(-HALF * 1.4, HALF * 1.4), 0, 0, 0, 1e9, rr(220, 380), rr(220, 380), [1, 1, 1], [1, 1, 1], 1);
 }
+// ── Modelos de árboles: varias piezas fundidas en una geometría con colores por vértice ──
+const vhash = (x, y, z) => { const s = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719) * 43758.5453; return s - Math.floor(s); };
+function mergeParts(parts) { // parts: [geometría, color(x,y,z)→[r,g,b] en sRGB, centro para normales suaves o null, irregularidad]
+  const P = [], Nn = [], C = [];
+  for (const [g0, col, ctr, jit] of parts) {
+    const g = g0.index ? g0.toNonIndexed() : g0; g.computeVertexNormals();
+    const p = g.attributes.position.array, n = g.attributes.normal.array;
+    for (let i = 0; i < p.length; i += 3) {
+      let x = p[i], y = p[i + 1], z = p[i + 2];
+      if (jit) { const k = 1 + (vhash(Math.round(x * 50), Math.round(y * 50), Math.round(z * 50)) - .5) * jit; const cxp = ctr ? ctr[0] : 0, cyp = ctr ? ctr[1] : y, czp = ctr ? ctr[2] : 0; x = cxp + (x - cxp) * k; y = cyp + (y - cyp) * (ctr ? k : 1); z = czp + (z - czp) * k; }
+      P.push(x, y, z);
+      if (ctr) { const dx = x - ctr[0], dy = (y - ctr[1]) * 1.3, dz = z - ctr[2], l = Math.hypot(dx, dy, dz) || 1; Nn.push(dx / l, dy / l, dz / l); } else Nn.push(n[i], n[i + 1], n[i + 2]);
+      const c = col(x, y, z); C.push(lin(c[0]), lin(c[1]), lin(c[2]));
+    }
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); out.setAttribute('normal', new THREE.Float32BufferAttribute(Nn, 3)); out.setAttribute('color', new THREE.Float32BufferAttribute(C, 3));
+  return out;
+}
+const BARK = () => [.28, .2, .14];
+function pineGeo(slender) {
+  const parts = [[new THREE.CylinderGeometry(.22, .42, 5, 6).translate(0, 2.5, 0), BARK, null, 0]];
+  const tiers = slender ? [[2, 4, 4.2], [1.6, 3.6, 6.4], [1.15, 3.2, 8.4], [.7, 2.6, 10.2], [.32, 1.8, 11.6]] : [[2.8, 4.2, 4], [2.2, 3.8, 6.2], [1.6, 3.4, 8.2], [.95, 2.8, 9.9], [.4, 1.9, 11.2]];
+  tiers.forEach(([r, h, y], k) => {
+    const g = new THREE.ConeGeometry(r, h, 7, 1, false).translate(0, y, 0);
+    parts.push([g, (x, yy, z) => { const t = clamp((yy - (y - h / 2)) / h, 0, 1), v = vhash(x, yy, z) * .08; return [.1 + t * .07 + v, .19 + t * .1 + v, .09 + t * .04]; }, null, .35]);
+  });
+  return mergeParts(parts);
+}
+function oakGeo(variant) {
+  const parts = [[new THREE.CylinderGeometry(.38, .62, 4.4, 7).translate(0, 2.2, 0), BARK, null, 0],
+  [new THREE.CylinderGeometry(.16, .26, 2.6, 5).rotateZ(.8).translate(.9, 4.6, 0), BARK, null, 0],
+  [new THREE.CylinderGeometry(.14, .24, 2.4, 5).rotateZ(-.7).rotateY(2).translate(-.6, 4.5, .5), BARK, null, 0]];
+  const blobs = variant ? [[0, 6.6, 0, 2.6], [1.9, 5.7, .6, 1.9], [-1.7, 5.9, -.4, 2.1], [.4, 5.6, -1.9, 1.9], [-.5, 5.4, 1.8, 1.8], [.3, 7.9, .2, 1.7]]
+    : [[0, 6.2, 0, 2.9], [2.1, 5.4, -.3, 2], [-1.6, 5.6, 1.2, 2], [.6, 5.2, 2, 1.7], [-.9, 5.3, -1.9, 1.8], [-.4, 7.6, -.5, 1.8], [1.2, 7.2, .9, 1.5]];
+  for (const [x, y, z, r] of blobs) {
+    const g = new THREE.IcosahedronGeometry(r, 0).scale(1, .82, 1).translate(x, y, z);
+    parts.push([g, (px, py, pz) => { const t = clamp((py - 4.2) / 5, 0, 1), v = vhash(px, py, pz) * .07; return [.15 + t * .1 + v, .24 + t * .11 + v, .1 + t * .04]; }, [x, y, z], .3]);
+  }
+  return mergeParts(parts);
+}
+function shrubGeo() {
+  const parts = [];
+  for (const [x, y, z, r] of [[0, .9, 0, 1.35], [.9, .7, .4, 1], [-.8, .65, -.3, 1.05]]) {
+    const g = new THREE.IcosahedronGeometry(r, 0).scale(1, .75, 1).translate(x, y, z);
+    parts.push([g, (px, py, pz) => { const t = clamp(py / 1.8, 0, 1), v = vhash(px, py, pz) * .08; return [.22 + t * .1 + v, .27 + t * .1 + v, .13 + t * .03]; }, [x, y, z], .35]);
+  }
+  return mergeParts(parts);
+}
+// versiones simples para las zonas lejanas
+const pineLo = () => mergeParts([[new THREE.CylinderGeometry(.3, .4, 4, 4).translate(0, 2, 0), BARK, null, 0], [new THREE.ConeGeometry(2.5, 9.5, 6).translate(0, 7, 0), (x, y) => { const t = clamp((y - 2.3) / 9.5, 0, 1); return [.1 + t * .07, .19 + t * .1, .09 + t * .04]; }, null, 0]]);
+const oakLo = () => mergeParts([[new THREE.CylinderGeometry(.4, .6, 4.4, 4).translate(0, 2.2, 0), BARK, null, 0], [new THREE.IcosahedronGeometry(3.1, 0).scale(1.15, .85, 1.15).translate(0, 6.3, 0), (x, y) => { const t = clamp((y - 4) / 5, 0, 1); return [.15 + t * .1, .24 + t * .11, .1 + t * .04]; }, [0, 6.3, 0], .25]]);
+const shrubLo = () => mergeParts([[new THREE.IcosahedronGeometry(1.5, 0).scale(1.1, .7, 1.1).translate(0, .9, 0), (x, y) => { const t = clamp(y / 1.8, 0, 1); return [.22 + t * .1, .27 + t * .1, .13 + t * .03]; }, [0, .9, 0], .3]]);
+// balanceo con el viento (las copas se mueven más que la base)
+const windU = { uWind: { value: new THREE.Vector2(0, 0) }, uSway: { value: .3 } };
+function swayMaterial(rough) {
+  const m = new THREE.MeshLambertMaterial({ vertexColors: true }); // Lambert: mucho más ligero que el estándar para miles de árboles
+  m.onBeforeCompile = sh => {
+    sh.uniforms.uTime = glowTime; sh.uniforms.uWind = windU.uWind; sh.uniforms.uSway = windU.uSway;
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float uTime,uSway;\nuniform vec2 uWind;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+      #ifdef USE_INSTANCING
+      { float hh=max(position.y-1.2,0.); float ph=instanceMatrix[3].x*.045+instanceMatrix[3].z*.06;
+        float s=(sin(uTime*1.6+ph)*.6+sin(uTime*2.9+ph*1.7)*.3)*uSway; vec3 lw=(transpose(mat3(instanceMatrix))*vec3(uWind.x,0.,uWind.y))/max(dot(instanceMatrix[0].xyz,instanceMatrix[0].xyz),.01);
+        transformed.xz+=(lw.xz*(.6+s)+vec2(s*.3,-s*.2))*hh*hh*.006; }
+      #endif`);
+  };
+  return m;
+}
 function buildTrees() {
-  const list = { pine: [], oak: [], shrub: [] };
+  // los árboles se agrupan por tipo y por zona del mapa (4×4) para que solo se dibujen los que se ven
+  const CH = 32, list = {};
   cellTrees = new Array(NN);
   for (let i = 0; i < NN; i++) {
     const v = VEG[i]; let k = 0, type = null;
-    if (v === V.PINE) { type = 'pine'; k = R() < .85 ? 2 : 1; } else if (v === V.OAK) { type = 'oak'; k = R() < .6 ? 2 : 1; } else if (v === V.SHRUB) { type = 'shrub'; k = R() < .6 ? 2 : 1; } else if (v === V.GRASS && R() < .05) { type = 'shrub'; k = 1; }
-    for (let j = 0; j < k; j++) list[type].push(i);
+    if (v === V.PINE) { type = R() < .5 ? 'pine' : 'pine2'; k = R() < .8 ? 2 : 1; }
+    else if (v === V.OAK) { type = R() < .5 ? 'oak' : 'oak2'; k = R() < .6 ? 2 : 1; }
+    else if (v === V.SHRUB) { type = 'shrub'; k = R() < .5 ? 2 : 1; }
+    else if ((v === V.GRASS || v === V.CROP) && R() < .05) { type = 'shrub'; k = 1; }
+    if (!type) continue;
+    const key = type + ':' + ((cx(i) / CH) | 0) + ':' + ((cz(i) / CH) | 0);
+    for (let j = 0; j < k; j++) (list[key] ||= []).push(i);
   }
-  const defs = {
-    pine: { geo: new THREE.ConeGeometry(2.3, 9, 7).translate(0, 6.4, 0), col: [.16, .27, .14] },
-    oak: { geo: new THREE.IcosahedronGeometry(3.3, 1).scale(1, .82, 1).translate(0, 5.6, 0), col: [.24, .34, .15] },
-    shrub: { geo: new THREE.IcosahedronGeometry(1.6, 0).scale(1, .7, 1).translate(0, .9, 0), col: [.33, .36, .19] },
-  };
+  const defs = { pine: pineGeo(false), pine2: pineGeo(true), oak: oakGeo(0), oak2: oakGeo(1), shrub: shrubGeo() };
+  const lo = { pine: pineLo(), oak: oakLo(), shrub: shrubLo() }; lo.pine2 = lo.pine; lo.oak2 = lo.oak;
+  const mats = { tree: swayMaterial(.88), shrub: swayMaterial(.95) };
   trees = [];
-  const trunkCells = [];
   const dummy = new THREE.Object3D(), c = new THREE.Color();
-  for (const t of ['pine', 'oak', 'shrub']) {
-    const cells = list[t], d = defs[t];
-    const m = new THREE.InstancedMesh(d.geo, new THREE.MeshStandardMaterial({ roughness: .9, flatShading: true }), cells.length);
-    m.castShadow = true; m.receiveShadow = true;
+  for (const key of Object.keys(list)) {
+    const t = key.split(':')[0], cells = list[key];
+    const m = new THREE.InstancedMesh(defs[t], t === 'shrub' ? mats.shrub : mats.tree, cells.length);
+    m.castShadow = t !== 'shrub' && hq; m.receiveShadow = true; m.userData.tree = t !== 'shrub';
     const xf = [];
     cells.forEach((cell, k) => {
-      const x = wx(cx(cell)) + rr(-2.6, 2.6), z = wx(cz(cell)) + rr(-2.6, 2.6), s = rr(.75, 1.3);
-      dummy.position.set(x, hWorld(x, z) - .4, z); dummy.rotation.set(0, R() * 6.28, 0); dummy.scale.set(s, s * rr(.85, 1.2), s); dummy.updateMatrix();
+      const x = wx(cx(cell)) + rr(-2.8, 2.8), z = wx(cz(cell)) + rr(-2.8, 2.8), s = t === 'shrub' ? rr(.7, 1.3) : rr(.7, 1.25);
+      dummy.position.set(x, hWorld(x, z) - .3, z); dummy.rotation.set(rr(-.04, .04), R() * 6.28, rr(-.04, .04)); dummy.scale.set(s, s * rr(.85, 1.2), s); dummy.updateMatrix();
       m.setMatrixAt(k, dummy.matrix); xf.push(dummy.matrix.clone());
-      const n = rr(.82, 1.15); c.setRGB(d.col[0] * n, d.col[1] * n, d.col[2] * n, THREE.SRGBColorSpace); m.setColorAt(k, c);
-      (cellTrees[cell] ||= []).push([trees.length, k, t !== 'shrub' ? trunkCells.length : -1]);
-      if (t !== 'shrub') trunkCells.push(dummy.matrix.clone());
+      const n = rr(.8, 1.18); c.setRGB(n * rr(.92, 1.1), n, n * rr(.88, 1.05)); m.setColorAt(k, c);
+      (cellTrees[cell] ||= []).push([trees.length, k]);
     });
-    trees.push({ mesh: m, base: d.col, xf }); world.add(m);
+    m.computeBoundingSphere(); m.boundingSphere.radius += 14;
+    Object.assign(m.userData, { hi: defs[t], lo: lo[t], shrub: t === 'shrub' });
+    trees.push({ mesh: m, xf }); world.add(m);
   }
-  const tr = new THREE.InstancedMesh(new THREE.CylinderGeometry(.35, .5, 3, 5).translate(0, 1.4, 0), new THREE.MeshStandardMaterial({ color: 0x4a3626, roughness: 1 }), trunkCells.length);
-  trunkCells.forEach((mx, k) => tr.setMatrixAt(k, mx)); world.add(tr); trunkMesh = tr;
 }
-// talar una celda (cortafuegos): se quitan árboles y tocones y queda tierra
+// talar una celda (cortafuegos): se quitan los árboles y queda tierra
 function clearTrees(i) {
   const L = cellTrees[i]; if (!L) return;
-  for (const [t, k, tk] of L) { const T = trees[t]; T.mesh.setMatrixAt(k, ZERO4); T.xf[k] = ZERO4.clone(); T.mesh.instanceMatrix.needsUpdate = true; if (tk >= 0) { trunkMesh.setMatrixAt(tk, ZERO4); trunkMesh.instanceMatrix.needsUpdate = true; } }
+  for (const [t, k] of L) { const T = trees[t]; T.mesh.setMatrixAt(k, ZERO4); T.xf[k] = ZERO4.clone(); T.mesh.instanceMatrix.needsUpdate = true; }
   cellTrees[i] = null;
 }
 function makeBreak(i) {
@@ -618,15 +810,15 @@ function cellColor(i) {
   else if (s === 1) { r = .03; g = .018; b = .012; }
   else { r = BC[i3]; g = BC[i3 + 1]; b = BC[i3 + 2]; if (s === 3) { r = r * .3 + .02; g = g * .26 + .015; b = b * .24 + .012; } }
   const w = Math.min(1, WET[i]); if (w > 0 && VEG[i] !== V.WATER) { r *= 1 - w * .45; g *= 1 - w * .38; b *= 1 - w * .2; }
-  cols[i3] = r; cols[i3 + 1] = g; cols[i3 + 2] = b;
+  const i4 = i * 4; cols[i4] = Math.sqrt(r) * 255; cols[i4 + 1] = Math.sqrt(g) * 255; cols[i4 + 2] = Math.sqrt(b) * 255; // raíz: más precisión en los oscuros
 }
 function treeState(i) {
   const L = cellTrees[i]; if (!L) return; const s = STATE[i]; const c = new THREE.Color(); const m4 = new THREE.Matrix4(), sc = new THREE.Matrix4();
   for (const [t, k] of L) {
     const T = trees[t];
-    if (s === 2) { c.setRGB(.03, .025, .02); sc.makeScale(.62, .8, .62); m4.copy(T.xf[k]).multiply(sc); T.mesh.setMatrixAt(k, m4); T.mesh.instanceMatrix.needsUpdate = true; }
-    else if (s === 1) c.setRGB(.07, .025, .01);
-    else if (s === 3) c.setRGB(.09, .07, .05);
+    if (s === 2) { c.setRGB(.16, .14, .13); sc.makeScale(.5, .86, .5); m4.copy(T.xf[k]).multiply(sc); T.mesh.setMatrixAt(k, m4); T.mesh.instanceMatrix.needsUpdate = true; }
+    else if (s === 1) c.setRGB(.55, .2, .08);
+    else if (s === 3) c.setRGB(.42, .34, .26);
     else continue;
     T.mesh.setColorAt(k, c); T.mesh.instanceColor.needsUpdate = true;
   }
@@ -707,7 +899,7 @@ function fireStep(dt) {
       if (ph >= 1 || FUEL[i] < .05) STATE[i] = 2;
       continue;
     }
-    if (ph >= 1) { STATE[i] = 2; FUEL[i] = 0; INT[i] = 0; burning[k] = burning[burning.length - 1]; burning.pop(); changed.push(i); continue; }
+    if (ph >= 1) { STATE[i] = 2; FUEL[i] = 0; INT[i] = 0; if (!WET[i]) { SMO[i] = 1; smold.push(i); } burning[k] = burning[burning.length - 1]; burning.pop(); changed.push(i); continue; }
     const x = cx(i), z = cz(i);
     for (let d = 0; d < 8; d++) {
       const nx = x + DX8[d], nz = z + DZ8[d]; if (nx < 0 || nz < 0 || nx >= N || nz >= N) continue;
@@ -1133,27 +1325,60 @@ function focusOn(v) { cam.tx = v.x; cam.tz = v.z; }
 let drag = null, hoverT = 0, mouse = { x: 0, y: 0, in: false };
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
 canvas.addEventListener('contextmenu', e => e.preventDefault());
-canvas.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, b: e.button, moved: false }; canvas.setPointerCapture(e.pointerId); });
+// táctil: un dedo mueve el mapa y toca; dos dedos pellizcan (zoom), giran (rumbo) y suben/bajan juntos (inclinación)
+const ptrs = new Map(); let pinch = null;
+const pinchState = () => { const [a, b] = [...ptrs.values()]; return { d: Math.hypot(b.x - a.x, b.y - a.y), a: Math.atan2(b.y - a.y, b.x - a.x), my: (a.y + b.y) / 2 }; };
+canvas.addEventListener('pointerdown', e => {
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); try { canvas.setPointerCapture(e.pointerId); } catch (er) { }
+  mouse.x = e.clientX; mouse.y = e.clientY; mouse.in = true;
+  if (ptrs.size === 2) { pinch = pinchState(); if (drag) drag.moved = true; return; }
+  if (ptrs.size > 2) return;
+  drag = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, b: e.button, moved: false, touch: e.pointerType !== 'mouse' };
+});
+canvas.addEventListener('pointercancel', e => { ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch = null; if (!ptrs.size) drag = null; });
 canvas.addEventListener('pointermove', e => {
   mouse.x = e.clientX; mouse.y = e.clientY; mouse.in = true;
+  if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch && ptrs.size >= 2) {
+    const s = pinchState(); let da = s.a - pinch.a; da = Math.atan2(Math.sin(da), Math.cos(da));
+    if (s.d > 10) cam.dist = clamp(cam.dist * pinch.d / s.d, 30, 780);
+    cam.yaw -= da; cam.tilt = clamp(cam.tilt + (s.my - pinch.my) * .005, -.6, .6);
+    pinch = s; return;
+  }
   if (!drag) return;
   const dx = e.clientX - drag.lx, dy = e.clientY - drag.ly; drag.lx = e.clientX; drag.ly = e.clientY;
-  if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 5) drag.moved = true;
+  if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > (drag.touch ? 10 : 5)) drag.moved = true;
   if (!drag.moved) return;
   if (drag.b === 0) { const k = cam.dist * .0016; cam.tx += (-Math.cos(cam.yaw) * dx - Math.sin(cam.yaw) * dy) * k; cam.tz += (Math.sin(cam.yaw) * dx - Math.cos(cam.yaw) * dy) * k; }
   else { cam.yaw -= dx * .006; cam.tilt = clamp(cam.tilt + dy * .004, -.6, .6); }
 });
-canvas.addEventListener('pointerleave', () => { mouse.in = false; });
-canvas.addEventListener('pointerup', e => { if (drag && !drag.moved) { if (drag.b === 0) clickAt(e.clientX, e.clientY); else if (drag.b === 2) { if (G.mode) { G.mode = null; renderPanel(); } else select(null); } } drag = null; });
+canvas.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') mouse.in = false; });
+canvas.addEventListener('pointerup', e => {
+  ptrs.delete(e.pointerId);
+  if (pinch || ptrs.size) { if (ptrs.size < 2) pinch = null; if (ptrs.size === 1 && drag) { const p = [...ptrs.values()][0]; drag.lx = p.x; drag.ly = p.y; drag.moved = true; } if (ptrs.size) return; }
+  if (drag && !drag.moved) { if (drag.b === 0) clickAt(e.clientX, e.clientY); else if (drag.b === 2) { if (G.mode) { G.mode = null; renderPanel(); } else select(null); } } drag = null; });
 canvas.addEventListener('wheel', e => { e.preventDefault(); cam.dist = clamp(cam.dist * Math.exp(e.deltaY * .0011), 30, 780); }, { passive: false });
 window.addEventListener('keydown', e => { if (e.code === 'Escape' && G) { if (G.mode) { G.mode = null; renderPanel(); } else select(null); } });
 window.addEventListener('keydown', e => { if (e.code === 'Space' && G && !G.over && !$('ovStart').classList.contains('show')) { e.preventDefault(); setSpeed(G.speed ? 0 : (G.prevSpeed || 1)); } });
+// rayo contra el relieve (marcha + bisección): mucho más rápido que intersecar la malla fina
 function pick(sx, sy) {
   if (!terrain) return null;
   const r = canvas.getBoundingClientRect(); ndc.set((sx - r.left) / r.width * 2 - 1, -(sy - r.top) / r.height * 2 + 1);
-  ray.setFromCamera(ndc, camera); const h = ray.intersectObject(terrain)[0]; if (!h) return null;
-  const x = clamp(Math.round((h.point.x + HALF) / CELL), 0, N - 1), z = clamp(Math.round((h.point.z + HALF) / CELL), 0, N - 1);
-  return { point: h.point, cell: z * N + x };
+  ray.setFromCamera(ndc, camera); const o = ray.ray.origin, d = ray.ray.direction;
+  const above = t => { const x = o.x + d.x * t, z = o.z + d.z * t; return o.y + d.y * t - hWorld(x, z); };
+  let t0 = 0, t1 = 0, found = false;
+  for (let k = 0; k < 900 && t1 < 5000; k++) {
+    const a = above(t1);
+    if (a < 0) { found = true; break; }
+    t0 = t1; t1 += Math.max(1.5, a * .5);
+  }
+  if (!found) return null;
+  for (let k = 0; k < 18; k++) { const m = (t0 + t1) / 2; if (above(m) < 0) t1 = m; else t0 = m; }
+  const point = new THREE.Vector3(o.x + d.x * t1, 0, o.z + d.z * t1);
+  if (Math.abs(point.x) > HALF + 1 || Math.abs(point.z) > HALF + 1) return null;
+  point.y = hWorld(point.x, point.z);
+  const x = clamp(Math.round((point.x + HALF) / CELL), 0, N - 1), z = clamp(Math.round((point.z + HALF) / CELL), 0, N - 1);
+  return { point, cell: z * N + x };
 }
 function entityAt(p) {
   const P = p.point; let best = null, bd = 1e9;
@@ -1167,7 +1392,7 @@ function entityAt(p) {
   return best;
 }
 function unitAtScreen(sx, sy) { // las aeronaves vuelan alto: se seleccionan por su posición en pantalla
-  const r = canvas.getBoundingClientRect(); let best = null, bd = 26;
+  const r = canvas.getBoundingClientRect(); let best = null, bd = IS_TOUCH ? 38 : 26;
   for (const u of G.units) { v3.copy(u.mesh.position); v3.y += 3; v3.project(camera); if (v3.z > 1) continue; const d = Math.hypot((v3.x + 1) / 2 * r.width + r.left - sx, (1 - v3.y) / 2 * r.height + r.top - sy); if (d < bd) { bd = d; best = u; } }
   return best;
 }
@@ -1190,13 +1415,16 @@ function select(ent) { G.sel = ent; G.mode = null; renderPanel(); renderUnits();
 // ───────────── Interfaz ─────────────
 const money = e => e >= 1e6 ? (e / 1e6).toFixed(2).replace('.', ',') + ' M€' : Math.round(e / 1000) + ' mil €';
 const fmtHa = c => (c * HA_CELL).toFixed(1).replace('.', ',') + ' ha';
+// en pantallas táctiles, los textos hablan de tocar en vez de hacer clic
+const tactil = s => s.replace(/clic derecho para cancelar/g, 'pulsa «Cancelar» para anular').replace(/Haz clic/g, 'Toca').replace(/haz clic/g, 'toca').replace(/Clic/g, 'Toca').replace(/clic/g, 'toca');
 function log(html, kind = '') {
+  if (IS_TOUCH) html = tactil(html);
   const el = document.createElement('div'); el.className = 'msg ' + kind; el.innerHTML = html; $('log').prepend(el);
   while ($('log').children.length > 6) $('log').lastChild.remove();
   setTimeout(() => { el.style.transition = 'opacity 1s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 1000); }, 14000);
 }
-function setSpeed(s) { if (s) G.prevSpeed = s; G.speed = s; document.querySelectorAll('#speed button').forEach(b => b.classList.toggle('on', +b.dataset.s === s)); }
-document.querySelectorAll('#speed button').forEach(b => b.onclick = () => setSpeed(+b.dataset.s));
+function setSpeed(s) { if (s) G.prevSpeed = s; G.speed = s; document.querySelectorAll('#speed button[data-s]').forEach(b => b.classList.toggle('on', +b.dataset.s === s)); }
+document.querySelectorAll('#speed button[data-s]').forEach(b => b.onclick = () => setSpeed(+b.dataset.s));
 function renderUnits() {
   $('units').innerHTML = G.units.map((u, k) => `<div class="uc glass ${G.sel && G.sel.obj === u ? 'sel' : ''}" data-k="${k}"><div class="ic">${ICON[u.type]}</div><div class="nm">${u.name}</div><div class="ss" id="us${k}">${u.status}</div><div class="bars">${u.maxW && u.water !== undefined && (u.type === 'bomba' || u.air) ? `<div class="bar w" title="Agua"><i id="uw${k}" style="width:${u.water / u.maxW * 100}%"></i></div>` : ''}${u.air ? '' : `<div class="bar h" title="Estado de la dotación"><i id="uh${k}" style="width:${u.hp}%"></i></div>`}</div></div>`).join('');
   $('units').querySelectorAll('.uc').forEach(el => { el.onclick = () => select({ kind: 'unit', obj: G.units[+el.dataset.k] }); el.ondblclick = () => focusOn(G.units[+el.dataset.k].mesh.position); });
@@ -1243,6 +1471,7 @@ function renderPanel() {
     const c = s.obj, st = ['Sin quemar', 'Ardiendo', 'Calcinado', 'Apagado (puede rebrotar)'][STATE[c]];
     h = `<h3>${VP[VEG[c]].n}</h3><p>${st} · Altitud ${Math.round(H[c] * 6)} m · Humedad del suelo ${Math.round((MOI[c] * .5 + Math.min(1, WET[c]) * .5) * 100)}%</p><p style="color:var(--muted)">Selecciona una autobomba (clic en ella o en su tarjeta) para darle órdenes.</p>`;
   }
+  if (IS_TOUCH) h = tactil(h);
   if (el._h === h) return; el._h = h;
   el.innerHTML = '<button class="x" id="pClose" title="Cerrar (Esc)">✕</button>' + h;
   const b = id => $(id);
@@ -1362,22 +1591,60 @@ mm.addEventListener('pointermove', e => { if (mmDrag) mmGo(e); });
 mm.addEventListener('pointerup', () => mmDrag = false);
 
 // ───────────── Visuales por fotograma ─────────────
+const C_HAZE = new THREE.Color(.62, .5, .38);
 const C_SKY_DAY = new THREE.Color(.5, .68, .86), C_SKY_DUSK = new THREE.Color(.95, .55, .33), C_SKY_NIGHT = new THREE.Color(.035, .05, .11), C_GREY = new THREE.Color(.5, .53, .57), tmpC = new THREE.Color();
 function updateVisuals(dt, gdt) {
   glowTime.value += dt;
   // cambios de celdas
-  if (changed.length) { for (const i of changed) { cellColor(i); treeState(i); mmPixel(i); } changed.length = 0; colAttr.needsUpdate = true; }
+  let texDirty = false;
+  if (changed.length) { for (const i of changed) { cellColor(i); treeState(i); mmPixel(i); } changed.length = 0; texDirty = true; }
   G.glowAcc = (G.glowAcc || 0) + dt;
-  if (G.glowAcc > .08) { G.glowAcc = 0; glow.fill(0); for (const i of burning) glow[i] = INT[i] * (.7 + Math.random() * .5); glowAttr.needsUpdate = true; }
+  if (G.glowAcc > .08) {
+    const step = G.glowAcc; G.glowAcc = 0;
+    for (const i of glowOn) cols[i * 4 + 3] = 0; glowOn.length = 0;
+    for (const i of burning) { cols[i * 4 + 3] = clamp(INT[i] * (.7 + Math.random() * .5), 0, 1) * 255; glowOn.push(i); }
+    // brasas que siguen rojas un rato en el suelo quemado
+    for (let k = smold.length - 1; k >= 0; k--) {
+      const i = smold[k]; SMO[i] -= step * (gdt > 0 ? .022 * G.speed : 0) + (WET[i] > .2 ? .5 : 0);
+      if (SMO[i] <= 0) { SMO[i] = 0; smold[k] = smold[smold.length - 1]; smold.pop(); continue; }
+      cols[i * 4 + 3] = Math.max(cols[i * 4 + 3], SMO[i] * SMO[i] * (.25 + Math.random() * .25) * 255); glowOn.push(i);
+    }
+    texDirty = true;
+  }
+  if (texDirty) colTex.needsUpdate = true;
   // luz
   const e = sunElev(), day = smooth(-.1, .25, e), dusk = Math.exp(-(((e - .04) / .13) ** 2)), night = 1 - day;
   tmpC.copy(C_SKY_NIGHT).lerp(C_SKY_DAY, day).lerp(C_SKY_DUSK, dusk * .55);
   tmpC.lerp(C_GREY.clone().multiplyScalar(.25 + .75 * day), WX.cloud * .6);
   if (WX.flash > .02) tmpC.lerp(new THREE.Color(.85, .88, 1), WX.flash * .7);
-  scene.background = tmpC; scene.fog.color.copy(tmpC);
-  scene.fog.near = 500 - WX.rain * 250; scene.fog.far = 2200 - WX.rain * 1100;
+  // humo en el aire: con mucho fuego el horizonte se vuelve pardo
+  const haze = Math.min(1, burning.length / 900) * .5;
+  tmpC.lerp(C_HAZE.clone().multiplyScalar(.3 + .7 * day), haze);
+  scene.background = null; scene.fog.color.copy(tmpC);
+  scene.fog.near = 380 - WX.rain * 200 - haze * 150; scene.fog.far = 1900 - WX.rain * 900 - haze * 700;
   const th = ((WX.time / 60 % 24) - 6) / 12 * Math.PI;
-  sun.position.set(Math.cos(th) * 700, Math.max(40, Math.sin(th) * 700), 260); sun.target.position.set(0, 0, 0);
+  const sd = new THREE.Vector3(Math.cos(th), Math.max(.06, Math.sin(th)), .37).normalize();
+  // la sombra sigue a la cámara: más nítida cuando te acercas
+  const tgt = new THREE.Vector3(cam.tx, cam.ty, cam.tz), ss = clamp(cam.dist * .9, 120, 420);
+  sun.target.position.copy(tgt); sun.position.copy(tgt).addScaledVector(sd, 900);
+  if (Math.abs(ss - (sun.userData.ss || 0)) > 8) { sun.userData.ss = ss; Object.assign(sun.shadow.camera, { left: -ss, right: ss, top: ss, bottom: -ss }); sun.shadow.camera.updateProjectionMatrix(); renderer.shadowMap.needsUpdate = true; }
+  // nivel de detalle de los árboles según la distancia a la cámara
+  G.lodAcc = (G.lodAcc || 0) + dt;
+  if (G.lodAcc > .25) {
+    G.lodAcc = 0; const far = hq ? 420 : 300;
+    for (const T of trees) { const m = T.mesh, d = m.boundingSphere.center.distanceTo(camera.position) - m.boundingSphere.radius; m.geometry = d > far ? m.userData.lo : m.userData.hi; if (m.userData.shrub) m.visible = d < (hq ? 700 : 450); }
+  }
+  // las sombras no se recalculan en cada fotograma: solo si te mueves o cada medio segundo
+  sun.userData.st = (sun.userData.st || 0) + dt;
+  if (sun.userData.st > .5 || !sun.userData.lt || sun.userData.lt.distanceTo(tgt) > 12) { sun.userData.st = 0; sun.userData.lt = tgt.clone(); renderer.shadowMap.needsUpdate = true; }
+  // cielo y agua
+  sky.position.copy(camera.position);
+  skyU.uHor.value.copy(tmpC); skyU.uZen.value.setRGB(tmpC.r * .42, tmpC.g * .58, tmpC.b * .95);
+  skyU.uSun.value.set(Math.cos(th), Math.sin(th), .37).normalize(); skyU.uSunC.value.setRGB(1, .8 + .2 * (1 - dusk), .55 + .4 * (1 - dusk)).multiplyScalar(day);
+  skyU.uDay.value = day; skyU.uNight.value = night; skyU.uCloud.value = WX.cloud;
+  waterU.uTime.value = glowTime.value; waterU.uSun.value.copy(sd); waterU.uSunC.value.copy(skyU.uSunC.value); waterU.uSunI.value = day * (1 - WX.cloud * .7);
+  waterU.uSky.value.copy(tmpC); waterU.uZen.value.copy(skyU.uZen.value); waterU.uDay.value = .15 + .85 * day;
+  windU.uWind.value.set(Math.sin(WX.wind), -Math.cos(WX.wind)).multiplyScalar(WX.ws / 30); windU.uSway.value = .15 + WX.ws / 60;
   sun.intensity = 2.6 * day * (1 - WX.cloud * .55) * (1 - WX.rain * .3);
   sun.color.setRGB(1, .85 + .15 * (1 - dusk), .7 + .3 * (1 - dusk));
   hemi.intensity = .32 + .65 * day * (1 - WX.cloud * .3) + WX.flash * 3;
@@ -1406,9 +1673,25 @@ function updateVisuals(dt, gdt) {
       const x = wx(cx(i)), z = wx(cz(i)), y = H[i] + 6, dark = .1 + day * .2;
       smoke.add(x + rr(-4, 4), y + rr(0, 6), z + rr(-4, 4), 0, rr(5, 9), 0, rr(14, 24), rr(10, 16), rr(60, 110), night > .5 ? [.4, .18, .07] : [dark, dark * .97, dark * .95], night > .5 ? [.08, .08, .09] : [dark + .22, dark + .22, dark + .23], .6 * (.6 + it * .4));
     }
+    // chispas que suben en remolinos
+    const nsp = Math.min(burning.length * .8, 160) * gdt;
+    for (let k = 0; k < nsp; k++) {
+      const i = burning[Math.floor(Math.random() * burning.length)]; if (INT[i] < .3) continue;
+      const x = wx(cx(i)) + rr(-3, 3), z = wx(cz(i)) + rr(-3, 3);
+      sparks.add(x, hWorld(x, z) + rr(2, 9), z, rr(-3, 3), rr(6, 16), rr(-3, 3), rr(1, 2.6), rr(1.2, 2.2), .3, [1, .85, .45], [1, .3, .05], 1);
+    }
+    // ceniza que cae a sotavento
+    const nash = Math.min(burning.length * .15, 30) * gdt;
+    for (let k = 0; k < nash; k++) {
+      const i = burning[Math.floor(Math.random() * burning.length)], d = rr(20, 90);
+      const x = wx(cx(i)) + wvx * d + rr(-25, 25), z = wx(cz(i)) + wvz * d + rr(-25, 25);
+      ash.add(x, H[i] + rr(30, 70), z, 0, rr(-2, 0), 0, rr(6, 12), rr(.8, 1.6), rr(.6, 1.2), [.55, .53, .5], [.35, .34, .33], .75);
+    }
   }
   flames.update(gdt || 0, wvx, wvz, wsm * 2.5);
   smoke.update(gdt || 0, wvx, wvz, wsm * 2.2);
+  sparks.update(gdt || 0, wvx, wvz, wsm * 2.5);
+  ash.update(gdt || 0, wvx, wvz, wsm * 1.5);
   water.update(gdt || 0, 0, 0, 0);
   // nubes
   const cd = 1 - day * .6;
@@ -1479,8 +1762,8 @@ function newGame(seed) {
     ok = generate(s); if (!ok) s = (s * 1103515245 + 12345) >>> 0;
   }
   lastSeed = G.seed;
-  burning = []; changed = [];
-  flames.n = smoke.n = water.n = 0;
+  burning = []; changed = []; smold = []; glowOn = []; SMO = new Float32Array(NN);
+  flames.n = smoke.n = water.n = sparks.n = ash.n = 0;
   // unidades en la base
   const roadNear = []; for (let dz = -4; dz <= 4; dz++) for (let dx = -4; dx <= 4; dx++) { const x = cx(G.base) + dx, z = cz(G.base) + dz; if (x < 0 || z < 0 || x >= N || z >= N) continue; const n = z * N + x; if (VEG[n] !== V.WATER && VEG[n] !== V.ROCK) roadNear.push(n); }
   roadNear.sort((a, b) => (ROADF[b] - ROADF[a]) || (cheb(a, G.base) - cheb(b, G.base)));
@@ -1547,17 +1830,17 @@ function startTutorial() {
   const fire = () => { const b = burning[0] ?? f; focusOn(cellWorld(b)); cam.dist = Math.min(cam.dist, 300); };
   tut = {
     k: 0, done: 0, T0: null, hlObj: null, steps: [
-      { t: 'Bienvenido al puesto de mando. Primero aprende a moverte: <b>arrastra el mapa con el botón izquierdo</b> del ratón.', ok: () => Math.hypot(cam.tx - tut.T0.tx, cam.tz - tut.T0.tz) > 50 },
-      { t: 'Ahora <b>arrastra con el botón derecho</b> para girar e inclinar la vista. Te servirá para ver valles que tapa el relieve.', ok: () => Math.abs(cam.yaw - tut.T0.yaw) > .4 || Math.abs(cam.tilt - tut.T0.tilt) > .15 },
-      { t: 'Usa la <b>rueda del ratón</b> para acercarte y alejarte. De cerca, la cámara baja casi a ras de suelo.', ok: () => Math.abs(cam.dist - tut.T0.dist) > 100 },
-      { t: 'Vamos a por el fuego. Selecciona la <b>Bomba 1</b>: haz clic en su tarjeta, abajo a la izquierda.', hl: () => card(bombs[0]), go: fire, ok: () => G.sel && G.sel.obj === bombs[0] },
-      { t: 'Con la Bomba 1 seleccionada, <b>haz clic en el mapa junto a las llamas</b>. Irá por carretera y empezará a echar agua al llegar.', go: fire, ok: () => bombs[0].task.type === 'attack' || bombs[0].sprayAt >= 0 },
+      { t: IS_TOUCH ? 'Bienvenido al puesto de mando. Primero aprende a moverte: <b>arrastra el mapa con un dedo</b>.' : 'Bienvenido al puesto de mando. Primero aprende a moverte: <b>arrastra el mapa con el botón izquierdo</b> del ratón.', ok: () => Math.hypot(cam.tx - tut.T0.tx, cam.tz - tut.T0.tz) > 50 },
+      { t: IS_TOUCH ? 'Ahora <b>gira dos dedos</b> sobre la pantalla para cambiar el rumbo de la vista, o <b>desliza dos dedos hacia arriba o abajo</b> para inclinarla. Te servirá para ver valles que tapa el relieve.' : 'Ahora <b>arrastra con el botón derecho</b> para girar e inclinar la vista. Te servirá para ver valles que tapa el relieve.', ok: () => Math.abs(cam.yaw - tut.T0.yaw) > .4 || Math.abs(cam.tilt - tut.T0.tilt) > .15 },
+      { t: IS_TOUCH ? '<b>Pellizca con dos dedos</b> para acercarte y alejarte. De cerca, la cámara baja casi a ras de suelo.' : 'Usa la <b>rueda del ratón</b> para acercarte y alejarte. De cerca, la cámara baja casi a ras de suelo.', ok: () => Math.abs(cam.dist - tut.T0.dist) > 100 },
+      { t: `Vamos a por el fuego. Selecciona la <b>Bomba 1</b>: ${IS_TOUCH ? 'toca' : 'haz clic en'} su tarjeta, abajo.`, hl: () => card(bombs[0]), go: fire, ok: () => G.sel && G.sel.obj === bombs[0] },
+      { t: `Con la Bomba 1 seleccionada, <b>${IS_TOUCH ? 'toca' : 'haz clic en'} el mapa junto a las llamas</b>. Irá por carretera y empezará a echar agua al llegar.`, go: fire, ok: () => bombs[0].task.type === 'attack' || bombs[0].sprayAt >= 0 },
       { t: 'En su tarjeta, la <b>barra azul</b> es el agua y la verde, el estado de la dotación. Cuando se queda sin agua va sola a repostar. Ahora selecciona la <b>Bomba 2</b> y mándala también al fuego.', hl: () => card(bombs[1]), ok: () => ['attack', 'refill'].includes(bombs[1].task.type) || bombs[1].sprayAt >= 0 },
-      { t: 'Mira la <b>brújula</b> de arriba: la flecha azul indica hacia dónde empuja el viento. El fuego corre más en esa dirección y cuesta arriba. Pulsa <b>pausa</b> (⏸ o la barra espaciadora).', hl: () => $('speed'), ok: () => G.speed === 0 },
+      { t: `Mira la <b>brújula</b> de arriba: la flecha azul indica hacia dónde empuja el viento. El fuego corre más en esa dirección y cuesta arriba. Pulsa <b>pausa</b> (⏸${IS_TOUCH ? '' : ' o la barra espaciadora'}).`, hl: () => $('speed'), ok: () => G.speed === 0 },
       { t: 'En pausa puedes pensar con calma y seguir dando órdenes. Reanuda con <b>▶</b>.', hl: () => $('speed'), ok: () => G.speed > 0 },
-      { t: `Los pueblos hay que evacuarlos antes de que llegue el fuego. Haz clic en <b>${town.name}</b> (la etiqueta que parpadea) y pulsa «Activar alarma de evacuación». En una partida normal solo conviene hacerlo si el fuego se acerca, porque cuesta dinero.`, obj: town, go: () => { focusOn(cellWorld(town.cell)); cam.dist = Math.max(cam.dist, 320); }, ok: () => town.alarm },
-      { t: `El ganado no escapa solo. Haz clic en <b>${farm.name}</b> y pulsa «Enviar el camión de ganado». Lo llevará a la base, que es zona segura.`, obj: farm, go: () => { focusOn(farm.grp.position); cam.dist = Math.max(cam.dist, 300); }, ok: () => farm.state !== 'waiting' || G.units.some(u => u.type === 'ganado' && u.task.type === 'load') },
-      { t: 'Para cerrar un panel usa la <b>✕</b> o la tecla Esc. Lee los <b>mensajes de la derecha</b>: avisan de cambios de viento, casas en peligro y focos nuevos.<br>Ahora usa <b>x2 o x4</b> para ir más rápido y <b>apaga el incendio del todo</b>. ¡Suerte!', hl: () => $('speed'), ok: () => false },
+      { t: `Los pueblos hay que evacuarlos antes de que llegue el fuego. ${IS_TOUCH ? 'Toca' : 'Haz clic en'} <b>${town.name}</b> (la etiqueta que parpadea) y pulsa «Activar alarma de evacuación». En una partida normal solo conviene hacerlo si el fuego se acerca, porque cuesta dinero.`, obj: town, go: () => { focusOn(cellWorld(town.cell)); cam.dist = Math.max(cam.dist, 320); }, ok: () => town.alarm },
+      { t: `El ganado no escapa solo. ${IS_TOUCH ? 'Toca' : 'Haz clic en'} <b>${farm.name}</b> y pulsa «Enviar el camión de ganado». Lo llevará a la base, que es zona segura.`, obj: farm, go: () => { focusOn(farm.grp.position); cam.dist = Math.max(cam.dist, 300); }, ok: () => farm.state !== 'waiting' || G.units.some(u => u.type === 'ganado' && u.task.type === 'load') },
+      { t: (IS_TOUCH ? 'Para cerrar un panel toca la <b>✕</b>. Lee los <b>mensajes</b> de arriba:' : 'Para cerrar un panel usa la <b>✕</b> o la tecla Esc. Lee los <b>mensajes de la derecha</b>:') + ' avisan de cambios de viento, casas en peligro y focos nuevos.<br>Ahora usa <b>x2 o x4</b> para ir más rápido y <b>apaga el incendio del todo</b>. ¡Suerte!', hl: () => $('speed'), ok: () => false },
     ]
   };
   tutShow();
@@ -1620,11 +1903,28 @@ $('bReset').onclick = () => { // doble pulsación en vez de confirm(), que no fu
 renderLevels();
 
 // ───────────── Bucle principal ─────────────
+// posproceso: render → resplandor del fuego (bloom) → tono y color de pantalla
+const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }));
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), .55, .45, .82);
+composer.addPass(bloom); composer.addPass(new OutputPass());
+let hq = !IS_TOUCH; try { const v = localStorage.getItem('rt-hq'); if (v) hq = v === '1'; } catch (e) { } // en móvil se empieza en calidad media
+function applyQuality() {
+  bloom.enabled = hq; sun.shadow.mapSize.set(hq ? 2048 : 1024, hq ? 2048 : 1024); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
+  for (const t of trees) t.mesh.castShadow = hq && t.mesh.userData.tree; renderer.shadowMap.needsUpdate = true;
+  for (const rt of [composer.renderTarget1, composer.renderTarget2]) if (rt.samples !== (hq ? 4 : 0)) { rt.samples = hq ? 4 : 0; rt.dispose(); }
+  renderer.setPixelRatio(Math.min(devicePixelRatio, hq ? 1.75 : 1)); resize();
+  $('bHQ').classList.toggle('on', hq); $('bHQ').title = hq ? 'Calidad alta (pulsa para ir más fluido)' : 'Calidad media (pulsa para más detalle)';
+}
+const render = () => composer.render();
 function resize() {
   const w = innerWidth, h = innerHeight; if (!w || !h) return; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+  composer.setPixelRatio(renderer.getPixelRatio()); composer.setSize(w, h);
+  bloom.resolution.set(w / 2, h / 2);
   pScale.value = renderer.getDrawingBufferSize(new THREE.Vector2()).y / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
 }
-addEventListener('resize', resize); resize();
+$('bHQ').onclick = () => { hq = !hq; try { localStorage.setItem('rt-hq', hq ? '1' : '0'); } catch (e) { } applyQuality(); };
+addEventListener('resize', resize); applyQuality();
 // coloca el tutorial, los mensajes y el panel debajo de la barra superior sin que se tapen
 function layoutTop() {
   let y = $('top').getBoundingClientRect().bottom + 8; const co = $('coach');
@@ -1635,17 +1935,23 @@ function layoutTop() {
   $('panel').style.top = innerWidth <= 900 ? y + 'px' : '';
 }
 let last = performance.now(), acc = 0, hudAcc = 0, mmAcc = 0;
+const autoQ = { s: [], done: false };
 const STEP = .1;
 function frame(now) {
   requestAnimationFrame(frame);
-  const dt = Math.min(.05, (now - last) / 1000); last = now;
-  if (!G) { renderer.render(scene, camera); return; }
+  const raw = now - last, dt = Math.min(.05, raw / 1000); last = now;
+  // calidad automática: si el equipo va justo, se baja una vez a calidad media
+  if (hq && G && !G.demo && G.speed && !autoQ.done && !document.hidden) {
+    if (raw > 0 && raw < 1000) autoQ.s.push(raw);
+    if (autoQ.s.length >= 90) { autoQ.s.sort((a, b) => a - b); const med = autoQ.s[45]; autoQ.done = true; if (med > 45) { hq = false; applyQuality(); log('⚙️ Tu equipo iba justo y he bajado la calidad gráfica a media para que vaya más fluido. Puedes cambiarla con el botón HD.', 'info'); } }
+  }
+  if (!G) { render(); return; }
   const gdt = G.over ? 0 : dt * G.speed;
   if (!G.over) { acc += gdt; let n = 0; while (acc >= STEP && n++ < 12) { simStep(STEP); acc -= STEP; } }
   updateCamera(dt); updateVisuals(dt, gdt); updateLabels();
   hudAcc += dt; if (hudAcc > .25) { hudAcc = 0; updateHUD(); updateHover(); layoutTop(); }
   mmAcc += dt; if (mmAcc > .5) { mmAcc = 0; drawMinimap(); }
-  renderer.render(scene, camera);
+  render();
 }
 // Escena de fondo para el menú
 { const li = lvlIdx; lvlIdx = 0; newGame(12345); G.demo = true; lvlIdx = li; } G.speed = 0; setSpeed(0);
@@ -1654,7 +1960,7 @@ requestAnimationFrame(frame);
 // Acceso de depuración (pruebas)
 window.RT = {
   get G() { return G; }, ignite, cam, flames, smoke, water, WX, burning: () => burning, order, taskAttack, activateAlarm,
-  get prof() { return prof; }, saveProf, airOrder, startCut, line4, cutPower, newGame, clickAt, get STATE() { return STATE; }, get VEG() { return VEG; }, get WET() { return WET; }, sunElev,
-  sim(sec) { const t0 = performance.now(); for (let k = 0; k < sec / STEP && !G.over; k++) simStep(STEP); updateVisuals(.05, .05); updateCamera(1); updateLabels(); updateHUD(); drawMinimap(); renderer.render(scene, camera); return Math.round(performance.now() - t0) + ' ms'; },
-  frame() { updateCamera(1); updateVisuals(.05, .05); updateLabels(); updateHUD(); renderer.render(scene, camera); }
+  get prof() { return prof; }, saveProf, hAt, get H() { return H; }, get AMP() { return AMP; }, scene, renderer, sun, sky, get world() { return world; }, get trees() { return trees; }, get terrain() { return terrain; }, bloom, airOrder, startCut, line4, cutPower, newGame, clickAt, get STATE() { return STATE; }, get VEG() { return VEG; }, get WET() { return WET; }, sunElev,
+  sim(sec) { const t0 = performance.now(); for (let k = 0; k < sec / STEP && !G.over; k++) simStep(STEP); updateVisuals(.05, .05); updateCamera(1); updateLabels(); updateHUD(); drawMinimap(); render(); return Math.round(performance.now() - t0) + ' ms'; },
+  frame() { updateCamera(1); updateVisuals(.05, .05); updateLabels(); updateHUD(); layoutTop(); drawMinimap(); render(); }
 };

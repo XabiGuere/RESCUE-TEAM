@@ -98,9 +98,36 @@ button.on{background:var(--fire);border-color:var(--fire);color:#160800;font-wei
 .xp{font-size:22px;font-weight:800;color:var(--warn);margin:8px 0}
 #loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--muted);z-index:30;background:#0a0c10}
 @media (max-width:900px){#log{width:240px}#units{width:190px}#panel{left:10px;transform:none;min-width:0;max-width:calc(100vw - 270px);bottom:auto;top:130px}#hover{display:none}}
-@media (max-width:560px){#log{width:calc(50vw - 15px)}#panel{max-width:calc(50vw - 15px)}}
+#c{touch-action:none}
+html.touch #hover{display:none}
+.onlyTouch{display:none}html.touch .onlyTouch{display:block}html.touch .onlyMouse{display:none}
+/* móvil: barra superior compacta, mensajes debajo, unidades en tira horizontal abajo */
+@media (max-width:640px){
+  #top{top:6px;left:6px;right:6px;gap:5px}
+  #top .blk{padding:5px 8px;gap:6px;border-radius:10px}
+  #top .big{font-size:14px}#top .lab{font-size:8.5px;letter-spacing:.08em}
+  #top>.blk:first-child{display:none}
+  #sunIc,#wxIc{font-size:16px!important}#compass{width:32px;height:32px}
+  #speed button{padding:4px 7px;font-size:12px}
+  #stats{margin-left:0;gap:10px;flex:1;justify-content:space-between}
+  #stats .st:nth-child(3),#stats .st:nth-child(4){display:none}
+  .dmg{width:70px}
+  #log{left:6px;right:6px;width:auto!important;gap:4px}
+  #log .msg:nth-child(n+3){display:none}
+  .msg{padding:5px 8px;font-size:12px}
+  #units{left:6px;right:122px;bottom:6px;width:auto!important;flex-direction:row;overflow-x:auto;overflow-y:hidden;max-height:none}
+  .uc{flex:0 0 132px;grid-template-columns:22px 1fr;padding:5px 7px}.uc .ic{font-size:16px}.uc .nm{font-size:12px}.uc .ss{font-size:10px}
+  #mm{right:6px;bottom:6px;padding:4px}#mm canvas{width:108px;height:108px}
+  #panel{left:6px!important;right:6px;top:auto!important;bottom:126px;max-width:none!important;transform:none;padding:9px 11px}
+  #panel p{font-size:12px}#panel .row button{padding:7px 10px}
+  #coach{width:calc(100vw - 12px)}#coach p{font-size:12.5px}
+  .card{padding:16px}.card h1{font-size:28px}
+  .lvls{grid-template-columns:repeat(3,1fr)}
+  .help{grid-template-columns:1fr}
+  .lbl{font-size:10px;padding:1px 5px}
+}
 </style>
-<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}</script>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 </head>
 <body>
 <canvas id="c"></canvas>
@@ -114,7 +141,7 @@ button.on{background:var(--fire);border-color:var(--fire);color:#160800;font-wei
     <svg id="compass" viewBox="-50 -50 100 100"><circle r="46" fill="rgba(255,255,255,.05)" stroke="rgba(255,255,255,.2)"/><text id="cN" x="0" y="-32" fill="#ff7b7b" font-size="15" font-weight="700" text-anchor="middle" dominant-baseline="middle">N</text><g id="wArrow"><path d="M0 -34 L11 -8 L4 -8 L4 30 L-4 30 L-4 -8 L-11 -8 Z" fill="#7cc8ff"/></g></svg>
     <div><div class="big" id="wind">20 km/h</div><div class="lab" id="windDir">Viento del O</div></div>
   </div>
-  <div class="glass blk" id="speed"><button data-s="0" title="Pausa (espacio)">⏸</button><button data-s="1" class="on">▶</button><button data-s="2">x2</button><button data-s="4">x4</button></div>
+  <div class="glass blk" id="speed"><button data-s="0" title="Pausa (espacio)">⏸</button><button data-s="1" class="on">▶</button><button data-s="2">x2</button><button data-s="4">x4</button><button id="bHQ" class="on">HD</button></div>
   <div class="glass blk" id="stats">
     <div class="st"><span class="lab">Ardiendo</span><span class="big" id="sFire">0 ha</span></div>
     <div class="st"><span class="lab">Quemado</span><span class="big" id="sBurn">0 ha</span></div>
@@ -134,7 +161,16 @@ button.on{background:var(--fire);border-color:var(--fire);color:#160800;font-wei
   <h1>RESCUE TEAM</h1>
   <p>Un incendio forestal acaba de empezar. Coordina a los bomberos, evacúa los pueblos, saca al ganado y no dejes que nadie muera. El fuego avanza según la vegetación, la pendiente, la humedad y un viento que puede cambiar en cualquier momento.</p>
   <div class="lvls" id="lvls"></div>
-  <div class="help">
+  <div class="help onlyTouch">
+    <div><b>Tocar</b> una autobomba o su tarjeta → seleccionarla</div>
+    <div><b>Tocar</b> el mapa con ella seleccionada → ir / atacar el fuego / repostar</div>
+    <div><b>Un dedo</b> → mover el mapa</div>
+    <div><b>Pellizcar</b> → acercar y alejar · <b>girar dos dedos</b> → rumbo de la vista</div>
+    <div><b>Deslizar dos dedos</b> arriba o abajo → inclinar la vista</div>
+    <div><b>Tocar un pueblo</b> → alarma de evacuación · <b>una granja</b> → camión de ganado</div>
+    <div><b>✕</b> en un panel → cerrarlo · <b>⏸</b> → pausa</div>
+  </div>
+  <div class="help onlyMouse">
     <div><b>Clic</b> en una autobomba → seleccionarla</div>
     <div><b>Clic</b> con ella seleccionada → ir / atacar el fuego / repostar</div>
     <div><b>Arrastrar</b> con botón izquierdo → mover el mapa</div>
