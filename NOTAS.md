@@ -68,6 +68,24 @@ Juego 3D de extinción de incendios forestales en el navegador, hecho con Three.
 3. ✅ Hangar con XP, niveles bloqueados, helicóptero, hidroavión, brigada, bulldozer, cortafuegos y tendido eléctrico.
 4. ✅ Sonido (ambiente, medios con volumen según la cercanía a la pantalla, avisos), nombre «Línea de Fuego», portada cinemática (`demoStep`: el incendio de fondo arde y la cámara lo rodea), récords por nivel (`prof.rec`) y flechas de aviso en el borde de la pantalla (`updateArrows`, con focos nuevos en `G.alerts`). Sin música, por decisión del usuario.
 
+### Después de la fase 4
+- **Camión cisterna (nodriza)** (`cisterna`):
+  - Se desbloquea en el nivel 2 y cuesta 900 / 1400 XP; se pueden tener 2.
+  - Lleva 400 de agua (4 autobombas). Las autobombas lo incluyen en `nearestWater` si les queda más cerca que un lago, y reciben el agua con `task.tk`.
+  - Con una autobomba seleccionada, clic en la cisterna = repostar en ella.
+  - Vacía, va sola a llenarse y vuelve a su puesto (`task.post`).
+- **Ataque preciso:** `standCell` y `goStand` colocan la autobomba en el punto pinchado, o en la celda sin llamas más cercana a ese punto.
+- **Viento:**
+  - A sotavento el calor sobre la dotación es mayor, con radio 2 en la dirección del viento.
+  - Con el viento a la espalda el chorro rinde más (hasta +45 %); de cara, menos. El estado de la autobomba lo indica.
+  - La retirada automática salta con 40 de salud y el aviso de calor con 55.
+
+- **Zonas mojadas:**
+  - La humedad (`WET`) ya no bloquea del todo el avance: multiplica la sequedad por `max(.1, 1 − WET·1,1)`, así que el fuego avanza más lento (hasta un 90 %) mientras dura y se va secando con el calor.
+  - Orden «💦 Mojar zona» en las autobombas (`startWet` y `wetStep`): moja un círculo de unas 3 celdas de radio sin fuego y, si llega el fuego, lo ataca.
+  - Las descargas aéreas sobre zonas sin fuego también sirven de barrera húmeda.
+  - Con el bot siguen ganándose los niveles 1–2 con el equipo inicial y el nivel 3 con equipo medio.
+
 Ideas que el usuario ha mencionado y no están hechas: ambulancias y policía como medios nuevos.
 
 ## Equilibrio (16/11/2026)

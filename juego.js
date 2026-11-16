@@ -63,6 +63,7 @@ const LEVELS = [
 // ───────────── Progreso del jugador y tienda ─────────────
 const SHOP = [
   { id: 'bomba', kind: 'unit', ic: '🚒', n: 'Autobomba extra', d: 'Una autobomba más en todas las partidas.', lvl: 1, price: [700, 1100, 1600], max: 3 },
+  { id: 'cisterna', kind: 'unit', ic: '🛢️', n: 'Camión cisterna (nodriza)', d: 'Lleva el agua de 4 autobombas. Apárcalo cerca del frente: las autobombas repostan en él en vez de ir al lago. Cuando se vacía va solo a llenarse y vuelve a su puesto.', lvl: 2, price: [900, 1400], max: 2 },
   { id: 'brigada', kind: 'unit', ic: '🪓', n: 'Brigada forestal', d: 'Cuadrilla con motosierras y desbrozadoras. Abre cortafuegos estrechos incluso en laderas muy empinadas, pero es lenta y vulnerable al calor.', lvl: 1, price: [500], max: 1 },
   { id: 'bulldozer', kind: 'unit', ic: '🚜', n: 'Bulldozer', d: 'Abre cortafuegos tres veces más rápido que la brigada, pero no sube pendientes fuertes.', lvl: 2, price: [1200], max: 1 },
   { id: 'heli', kind: 'unit', ic: '🚁', n: 'Helicóptero bombardero', d: 'Vuela en línea recta y llena el helibalde en cualquier embalse. Hace rotaciones solo mientras quede fuego. No vuela de noche ni con viento de más de 60 km/h.', lvl: 2, price: [1600, 2600], max: 2 },
@@ -81,7 +82,7 @@ let prof = (() => {
 })();
 const saveProf = () => { try { localStorage.setItem('rt-prof', JSON.stringify(prof)); } catch (e) { } };
 const own = id => prof.own[id] || 0;
-const ICON = { bomba: '🚒', ganado: '🚛', brigada: '🪓', bulldozer: '🚜', heli: '🚁', avion: '🛩️' };
+const ICON = { bomba: '🚒', cisterna: '🛢️', ganado: '🚛', brigada: '🪓', bulldozer: '🚜', heli: '🚁', avion: '🛩️' };
 const AIR = { heli: { sp: 8, cruise: 38, low: 15, scoopT: 4 }, avion: { sp: 13, cruise: 55, low: 22, scoopT: 3 } };
 
 const TOWN_NAMES = ['Valdelobos', 'Peñarrubia', 'Robledo del Monte', 'Fuentealba', 'Cañada Honda', 'Villaseca', 'Hoyos del Pinar', 'Navalcuervo'];
@@ -786,6 +787,10 @@ function makeVehicle(type) {
   if (type === 'bomba') {
     box(2.6, 2.2, 5, M(0xc8102e), 0, 1.9, -.6); box(2.6, 1.9, 2, M(0xd81b34), 0, 1.75, 2.6); box(2.62, .25, 7, M(0xf2f2f2), 0, 1.4, 0);
     box(2.2, .6, 1.4, glass, 0, 2.3, 3.2);
+  } else if (type === 'cisterna') {
+    box(2.6, 1.9, 2, M(0xd81b34), 0, 1.75, 2.8); box(2.2, .6, 1.4, glass, 0, 2.3, 3.4); box(2.62, .5, 6.4, M(0x3a3a3a), 0, .95, -.3);
+    const tank = new THREE.Mesh(new THREE.CylinderGeometry(1.35, 1.35, 5.2, 16).rotateX(Math.PI / 2), M(0xc9ccd1)); tank.position.set(0, 2.45, -1.1); tank.castShadow = true; g.add(tank);
+    for (const z of [-3, .8]) { const r = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.4, .25, 16).rotateX(Math.PI / 2), M(0xc8102e)); r.position.set(0, 2.45, z); g.add(r); }
   } else if (type === 'brigada') {
     box(2.4, 1.6, 2.2, M(0x2d6a3e), 0, 1.7, 1.8); box(2.1, .6, 1.2, glass, 0, 2.2, 2.4); box(2.4, .8, 3, M(0x2d6a3e), 0, 1.2, -1);
     box(2.42, .2, 5.2, M(0xf3c316), 0, 1.6, .3);
@@ -912,7 +917,8 @@ function fireStep(dt) {
       const nx = x + DX8[d], nz = z + DZ8[d]; if (nx < 0 || nz < 0 || nx >= N || nz >= N) continue;
       const n = nz * N + nx, s = STATE[n]; if (s === 1 || s === 2) continue;
       const sp = VP[VEG[n]].spread; if (!sp || FUEL[n] < .05) continue;
-      const dry = dryG * (1 - MOI[n] * .45) - WET[n] * 1.5; if (dry <= 0) continue;
+      // el terreno mojado no frena del todo el fuego: lo ralentiza (hasta un 90 %) mientras dura la humedad
+      const dry = dryG * (1 - MOI[n] * .45) * Math.max(.1, 1 - WET[n] * 1.1); if (dry <= 0) continue;
       const cosA = (DX8[d] * wvx + DZ8[d] * wvz) / DL8[d];
       const W = Math.exp(TUNE.W * wsm * cosA);
       const Sl = clamp(Math.exp(1.6 * (H[n] - H[i]) / (CELL * DL8[d])), .35, 4);
@@ -1073,7 +1079,7 @@ function wildStep(dt) {
 
 // ───────────── Unidades ─────────────
 function newUnit(type, name, cell) {
-  const wet = type === 'bomba' || type === 'heli' || type === 'avion', maxW = 100 * (1 + .25 * own('tank'));
+  const wet = type === 'bomba' || type === 'cisterna' || type === 'heli' || type === 'avion', maxW = (type === 'cisterna' ? 400 : 100) * (1 + .25 * own('tank'));
   const u = { type, name, cell, x: cx(cell), z: cz(cell), heading: 0, path: null, pi: 0, task: { type: 'idle' }, water: wet ? maxW : 0, maxW, hp: 100, carry: 0, carryFarm: null, work: 0, sprayAt: -1, status: 'En la base' };
   if (AIR[type]) { u.air = true; u.home = cell; u.y = H[cell] + 2; u.task = { type: 'parked' }; u.ready = type === 'heli' ? 18 : 30; } // tiempo de alerta de la tripulación
   return u;
@@ -1191,18 +1197,31 @@ function airStep(u, dt) {
   u.y += (yAbs - u.y) * Math.min(1, dt * 1.6);
 }
 function taskMove(u, cell) { if (pathNear(u, cell, 0) || pathNear(u, cell, 2)) { u.task = { type: 'move', goal: cell }; u.status = 'En marcha'; return true; } log(`⛔ ${u.name}: no hay ruta posible hasta ahí.`, 'warn'); return false; }
-function taskAttack(u, cell) {
-  if (u.water <= 1) { taskRefill(u, cell); return; }
-  if (pathNear(u, cell, 3)) { u.task = { type: 'attack', focus: cell }; u.status = 'Hacia el fuego'; } else log(`⛔ ${u.name}: no puede llegar a ese frente (pendiente, agua o llamas).`, 'warn');
-}
-function nearestWater(u) {
-  let best = null, bd = 1e9;
-  for (const c of G.shore.concat(G.hydrants)) { const d = octile(c, u.cell) + (STATE[c] === 1 ? 999 : 0); if (d < bd) { bd = d; best = c; } }
+// celda donde colocarse para atacar: la más cercana al punto pinchado que no arda (wu: cuánto pesa la cercanía al propio camión)
+function standCell(u, c, wu = 0, r = 5) {
+  let best = -1, bd = 1e9; const x0 = cx(c), z0 = cz(c);
+  for (let dz = -r; dz <= r; dz++) for (let dx = -r; dx <= r; dx++) {
+    const x = x0 + dx, z = z0 + dz; if (x < 0 || z < 0 || x >= N || z >= N) continue; const n = z * N + x;
+    if (STATE[n] === 1 || VEG[n] === V.WATER || VEG[n] === V.ROCK) continue;
+    const d = Math.hypot(dx, dz) + wu * octile(n, u.cell); if (d < bd) { bd = d; best = n; }
+  }
   return best;
 }
-function taskRefill(u, resume, src) {
-  const s = src ?? nearestWater(u); if (s == null) return;
-  if (pathNear(u, s, 1)) { u.task = { type: 'refill', src: s, resume }; u.status = 'A por agua'; } else log(`⛔ ${u.name}: no encuentra punto de agua accesible.`, 'warn');
+function goStand(u, c, wu) { const s = standCell(u, c, wu); return (s >= 0 && (pathNear(u, s, 0) || pathNear(u, s, 1))) || pathNear(u, c, 3); }
+function taskAttack(u, cell) {
+  if (u.water <= 1) { taskRefill(u, cell); return; }
+  if (goStand(u, cell, 0)) { u.task = { type: 'attack', focus: cell }; u.status = 'Hacia el fuego'; } else log(`⛔ ${u.name}: no puede llegar a ese frente (pendiente, agua o llamas).`, 'warn');
+}
+// punto de agua más cercano: lagos, hidrantes y, para las autobombas, las cisternas que aún llevan agua
+function nearestWater(u) {
+  let best = null, bd = 1e9, tk = null;
+  for (const c of G.shore.concat(G.hydrants)) { const d = octile(c, u.cell) + (STATE[c] === 1 ? 999 : 0); if (d < bd) { bd = d; best = c; tk = null; } }
+  if (u.type === 'bomba') for (const t of G.units) if (t.type === 'cisterna' && t.water > 15 && t.task.type !== 'refill') { const d = octile(t.cell, u.cell) - 4; if (d < bd) { bd = d; best = t.cell; tk = t; } }
+  return { cell: best, tk };
+}
+function taskRefill(u, resume, src, tk) {
+  let s = src; if (s == null) { const w = nearestWater(u); s = w.cell; tk = w.tk; } if (s == null) return;
+  if (pathNear(u, s, 1)) { u.task = { type: 'refill', src: s, resume, tk: tk || null }; u.status = tk ? `A repostar en ${tk.name}` : 'A por agua'; } else log(`⛔ ${u.name}: no encuentra punto de agua accesible.`, 'warn');
 }
 function taskRescue(u, h) { if (pathNear(u, h.cell, 1)) { u.task = { type: 'rescue', house: h }; u.status = 'A avisar a ' + h.name; } else log(`⛔ ${u.name}: no puede llegar a ${h.name}.`, 'warn'); }
 function taskLoad(u, f) { if (pathNear(u, f.cell, 2)) { u.task = { type: 'load', farm: f }; u.status = 'Hacia ' + f.name; } else log(`⛔ ${u.name}: no puede llegar a ${f.name}.`, 'warn'); }
@@ -1213,7 +1232,7 @@ function moveUnit(u, dt) {
   if (STATE[n] === 1 && INT[n] > .06) { u.blocked = true; return false; }
   const tx = cx(n), tz = cz(n), dx = tx - u.x, dz = tz - u.z, d = Math.hypot(dx, dz);
   const vc = VP[VEG[n]].cost, cost = ROADF[n] ? 1 : u.type === 'brigada' ? 1.8 : u.type === 'bulldozer' ? Math.min(vc, 2.5) : vc;
-  const sp = ({ bomba: 4.2, ganado: 4, brigada: 2.8, bulldozer: 2.4 }[u.type]) * G.spd / Math.sqrt(cost) * dt;
+  const sp = ({ bomba: 4.2, cisterna: 3.6, ganado: 4, brigada: 2.8, bulldozer: 2.4 }[u.type]) * G.spd / Math.sqrt(cost) * dt;
   if (d <= sp) { u.x = tx; u.z = tz; u.pi++; } else { u.x += dx / d * sp; u.z += dz / d * sp; }
   if (d > .01) u.heading = Math.atan2(dx, dz);
   u.cell = Math.round(u.z) * N + Math.round(u.x);
@@ -1231,7 +1250,11 @@ function spray(u, dt) {
   const t = findBurningNear(u.cell, 5);
   if (t < 0 || u.water <= 0) { u.sprayAt = -1; return false; }
   u.sprayAt = t; u.water = Math.max(0, u.water - 4 * dt);
-  const ef = (1 + .2 * own('ret')) * TUNE.hose;
+  // con el viento a la espalda el chorro llega más lejos y rinde más; de cara, el agua se dispersa
+  const ddx = cx(t) - u.x, ddz = cz(t) - u.z, dl = Math.hypot(ddx, ddz) || 1;
+  const wc = (ddx * Math.sin(WX.wind) - ddz * Math.cos(WX.wind)) / dl, wk = clamp(WX.ws / 30, 0, 1.3);
+  u.windSide = wc > .35 ? 1 : wc < -.35 ? -1 : 0;
+  const ef = (1 + .2 * own('ret')) * TUNE.hose * (1 + .35 * wc * wk);
   WET[t] = Math.min(1.6, WET[t] + .6 * ef * dt);
   const x = cx(t), z = cz(t);
   // el chorro moja una franja de 3×3 alrededor del objetivo
@@ -1239,18 +1262,48 @@ function spray(u, dt) {
   changed.push(t);
   return true;
 }
+// ── Mojar una zona sin fuego: una franja húmeda que ralentiza el avance mientras no se seque ──
+const WET_R = 3;
+function startWet(u, c) {
+  if (u.water < 5) { log(`💧 ${u.name} no tiene agua: primero tiene que repostar.`, 'warn'); return; }
+  if (goStand(u, c, 0)) { u.task = { type: 'wet', center: c }; u.status = 'Hacia la zona a mojar'; } else log(`⛔ ${u.name}: no puede llegar a esa zona.`, 'warn');
+}
+function wetStep(u, T, arrived, dt) {
+  if (!arrived) return;
+  if (findBurningNear(u.cell, 5) >= 0 && spray(u, dt)) { u.status = 'El fuego ha llegado: atacando'; return; } // si llega el fuego, lo ataca
+  if (u.water <= 0) { u.task = { type: 'idle' }; u.status = 'Sin agua · zona mojada en parte'; return; }
+  let best = -1, bw = 1e9, tot = 0, done = 0; const x0 = cx(T.center), z0 = cz(T.center);
+  for (let dz = -WET_R; dz <= WET_R; dz++) for (let dx = -WET_R; dx <= WET_R; dx++) {
+    if (dx * dx + dz * dz > WET_R * WET_R + 1) continue;
+    const x = x0 + dx, z = z0 + dz; if (x < 0 || z < 0 || x >= N || z >= N) continue; const n = z * N + x;
+    if (STATE[n] === 2 || !VP[VEG[n]].spread) continue;
+    tot++; if (WET[n] >= .8) done++; else if (WET[n] < bw) { bw = WET[n]; best = n; }
+  }
+  if (best < 0) { u.task = { type: 'idle' }; u.status = 'Zona mojada'; u.sprayAt = -1; log(`💦 ${u.name} ha terminado de mojar la zona. El fuego avanzará más lento por ahí mientras no se seque.`, 'ok'); return; }
+  const ef = (1 + .2 * own('ret')) * TUNE.hose;
+  u.sprayAt = best; u.water = Math.max(0, u.water - 4 * dt);
+  WET[best] = Math.min(1.6, WET[best] + .9 * ef * dt); changed.push(best);
+  for (let d = 0; d < 8; d++) { const nx = cx(best) + DX8[d], nz = cz(best) + DZ8[d]; if (nx >= 0 && nz >= 0 && nx < N && nz < N) { const n = nz * N + nx; WET[n] = Math.min(1.6, WET[n] + .25 * ef * dt); changed.push(n); } }
+  u.status = `Mojando la zona · ${Math.round(done / Math.max(1, tot) * 100)} %`;
+}
 function unitsStep(dt) {
   for (const u of G.units) {
     if (u.air) { airStep(u, dt); continue; }
     // calor
-    let heat = 0; const x = cx(u.cell), z = cz(u.cell);
-    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) { const nx = x + dx, nz = z + dz; if (nx < 0 || nz < 0 || nx >= N || nz >= N) continue; const n = nz * N + nx; if (STATE[n] === 1) heat += INT[n] * (dx || dz ? .45 : 1.3); }
-    if (heat > .05) { u.hp -= heat * dt * 7 * (1 - .2 * own('epi')) * (u.type === 'brigada' ? 1.5 : 1); if (u.hp < 45 && !u.hot) { u.hot = true; log(`🥵 ${u.name}: ¡calor extremo, la dotación está en peligro!`, 'bad'); } }
+    // calor: a sotavento (con el viento empujando llamas y humo hacia la dotación) quema mucho más
+    let heat = 0; const x = cx(u.cell), z = cz(u.cell), wvx = Math.sin(WX.wind), wvz = -Math.cos(WX.wind), wk = clamp(WX.ws / 25, 0, 2);
+    for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) {
+      const nx = x + dx, nz = z + dz; if (nx < 0 || nz < 0 || nx >= N || nz >= N) continue; const n = nz * N + nx; if (STATE[n] !== 1) continue;
+      const l = Math.hypot(dx, dz), down = l ? Math.max(0, (-dx * wvx - dz * wvz) / l) : 0, ring = Math.max(Math.abs(dx), Math.abs(dz));
+      const base = ring === 0 ? 1.3 : ring === 1 ? .45 : .22 * down;
+      heat += INT[n] * base * (1 + 1 * down * wk);
+    }
+    if (heat > .05) { u.hp -= Math.min(heat, 2.2) * dt * 7 * (1 - .2 * own('epi')) * (u.type === 'brigada' ? 1.5 : 1); if (u.hp < 55 && !u.hot) { u.hot = true; log(`🥵 ${u.name}: ¡calor extremo, la dotación está en peligro!`, 'bad'); } }
     else u.hp = Math.min(100, u.hp + dt * 1.5);
-    if (u.hp < 70) u.hot = u.hp < 45 ? u.hot : false;
+    if (u.hp > 75) u.hot = false;
     if (u.hp <= 0) { endGame(false, `La dotación de <b>${u.name}</b> ha quedado atrapada por las llamas. Han muerto bomberos.`); return; }
-    if (u.hp < 30 && u.task.type !== 'retreat') {
-      const safe = astar(u.cell, i => DIST[i] >= 7, () => 0, costFor(u), 8000);
+    if (u.hp < 40 && u.task.type !== 'retreat') {
+      const safe = astar(u.cell, i => DIST[i] >= 7, () => 0, costFor(u), 8000) || astar(u.cell, i => DIST[i] >= 4, () => 0, costFor(u), 12000); // si no hay salida lejana, al menos apartarse
       if (safe) { setPath(u, safe); u.task = { type: 'retreat' }; u.status = 'Retirada de emergencia'; log(`🚒 ${u.name} se retira para salvar a la dotación.`, 'warn'); }
     }
     const T = u.task;
@@ -1259,19 +1312,30 @@ function unitsStep(dt) {
     u.sprayAt = -1;
     switch (T.type) {
       case 'idle': case 'move': case 'retreat':
-        if (arrived && T.type !== 'idle') { u.task = { type: 'idle' }; u.status = 'En espera'; }
+        if (arrived && T.type !== 'idle') { u.task = { type: 'idle' }; u.status = u.type === 'cisterna' ? 'En su puesto · las autobombas pueden repostar aquí' : 'En espera'; }
+        if (u.type === 'cisterna' && u.task.type === 'idle' && G.t > (u.giveUntil || 0) && u.water > .5) u.status = 'En su puesto · las autobombas pueden repostar aquí';
+        if (u.type === 'cisterna' && u.task.type === 'idle' && u.water <= .5 && G.t > (u.retryW || 0)) { // vacía: va sola a llenarse y vuelve
+          u.retryW = G.t + 10; const post = u.cell; taskRefill(u, null);
+          if (u.task.type === 'refill') { u.task.post = post; log(`🛢️ ${u.name} se ha vaciado y va a llenarse. Luego volverá a su puesto.`, 'info'); }
+        }
         if (arrived && u.type === 'bomba' && u.water > 0 && spray(u, dt)) u.status = 'Defendiendo posición';
         break;
       case 'attack':
         if (!arrived) break;
         if (u.water <= 0) { taskRefill(u, T.focus); log(`💧 ${u.name} se ha quedado sin agua y va a repostar.`, 'info'); break; }
-        if (spray(u, dt)) { u.status = 'Atacando el fuego'; break; }
-        { let nb = findBurningNear(T.focus, 14, u.cell); if (nb < 0) nb = findBurningNear(u.cell, 30); if (nb >= 0) { T.focus = nb; if (!pathNear(u, nb, 3)) { u.task = { type: 'idle' }; u.status = 'Sin acceso al frente'; } } else { u.task = { type: 'idle' }; u.status = 'Zona sofocada'; } }
+        if (spray(u, dt)) { u.status = 'Atacando el fuego' + (u.windSide > 0 ? ' · viento a favor' : u.windSide < 0 ? ' · ¡viento en contra!' : ''); break; }
+        { let nb = findBurningNear(T.focus, 14, u.cell); if (nb < 0) nb = findBurningNear(u.cell, 30); if (nb >= 0) { T.focus = nb; if (!goStand(u, nb, .4)) { u.task = { type: 'idle' }; u.status = 'Sin acceso al frente'; } } else { u.task = { type: 'idle' }; u.status = 'Zona sofocada'; } }
         break;
       case 'cut': cutStep(u, T, arrived, dt); break;
+      case 'wet': wetStep(u, T, arrived, dt); break;
       case 'refill':
         if (!arrived) break;
-        u.status = 'Repostando agua'; u.water = Math.min(u.maxW, u.water + 14 * dt);
+        if (T.tk) { // repostar en una cisterna: pasa agua de un camión a otro
+          const tk = T.tk;
+          if (tk.water <= .5 || cheb(u.cell, tk.cell) > 2 || tk.task.type === 'refill') { taskRefill(u, T.resume); break; }
+          const q = Math.min(18 * dt, tk.water, u.maxW - u.water); tk.water -= q; u.water += q; u.status = `Repostando en ${tk.name}`; tk.status = `Dando agua a ${u.name}`; tk.giveUntil = G.t + .4;
+        } else { u.status = u.type === 'cisterna' ? 'Llenando la cisterna' : 'Repostando agua'; u.water = Math.min(u.maxW, u.water + (u.type === 'cisterna' ? 40 : 14) * dt); }
+        if (u.type === 'cisterna' && u.water >= u.maxW) { if (T.post != null && taskMove(u, T.post)) u.status = 'Vuelve a su puesto'; else { u.task = { type: 'idle' }; u.status = 'Cisterna llena'; } break; }
         if (u.water >= u.maxW) { if (T.resume != null && STATE[T.resume] !== 0 || (T.resume != null && findBurningNear(T.resume, 14) >= 0)) { const f = findBurningNear(T.resume, 14); if (f >= 0) { taskAttack(u, f); break; } } u.task = { type: 'idle' }; u.status = 'Depósito lleno'; }
         break;
       case 'rescue':
@@ -1302,6 +1366,12 @@ function order(u, p, ent) {
   if (u.air) return airOrder(u, c);
   if (ent && ent.kind === 'house' && ent.obj.town < 0 && ent.obj.people > 0) return taskRescue(u, ent.obj);
   if (u.type === 'brigada' || u.type === 'bulldozer') return taskMove(u, c);
+  if (u.type === 'cisterna') { // se aparca donde le digas; en agua o en un pueblo, se llena
+    const src = VEG[c] === V.WATER ? nearestShoreTo(c) : ent && ent.kind === 'town' && cheb(c, ent.obj.cell) < 2 ? ent.obj.cell : null;
+    if (src != null) { taskRefill(u, null, src); if (u.task.type === 'refill') u.task.post = null; return; }
+    if (taskMove(u, c)) u.status = 'Hacia su puesto';
+    return;
+  }
   if (u.type === 'ganado') {
     if (ent && ent.kind === 'farm') { if (ent.obj.state === 'waiting') return taskLoad(u, ent.obj); log(`${ent.obj.name}: no queda ganado que recoger.`, 'info'); return; }
     if (ent && ent.kind === 'base') return taskBase(u);
@@ -1413,10 +1483,18 @@ function clickAt(sx, sy) {
   const p = pick(sx, sy);
   if (G.mode) {
     if (!p) return;
+    if (G.mode.kind === 'wet') { S.ui('click'); startWet(G.mode.unit, p.cell); G.mode = null; renderPanel(); return; }
     if (G.mode.a == null) { G.mode.a = p.cell; renderPanel(); return; }
     startCut(G.mode.unit, line4(G.mode.a, p.cell).slice(0, MAXCUT + 1)); G.mode = null; renderPanel(); return;
   }
-  const su = unitAtScreen(sx, sy); if (su) return select({ kind: 'unit', obj: su });
+  const su = unitAtScreen(sx, sy);
+  // autobomba seleccionada + clic en una cisterna = ir a repostar en ella
+  if (su && su.type === 'cisterna' && G.sel && G.sel.kind === 'unit' && G.sel.obj.type === 'bomba') {
+    const b = G.sel.obj; S.ui('click');
+    if (su.water < 5) log(`${su.name} está vacía.`, 'info'); else { taskRefill(b, null, su.cell, su); log(`💧 ${b.name} va a repostar en ${su.name}.`, 'info'); }
+    return;
+  }
+  if (su) return select({ kind: 'unit', obj: su });
   if (!p) return;
   const ent = entityAt(p);
   if (G.sel && G.sel.kind === 'unit') { S.ui('click'); order(G.sel.obj, p, ent); destRing.visible = true; destRing.position.copy(p.point).y += .5; destRing.userData.t = 1.5; return; }
@@ -1441,7 +1519,7 @@ function log(html, kind = '') {
 function setSpeed(s) { if (s) G.prevSpeed = s; G.speed = s; document.querySelectorAll('#speed button[data-s]').forEach(b => b.classList.toggle('on', +b.dataset.s === s)); }
 document.querySelectorAll('#speed button[data-s]').forEach(b => b.onclick = () => setSpeed(+b.dataset.s));
 function renderUnits() {
-  $('units').innerHTML = G.units.map((u, k) => `<div class="uc glass ${G.sel && G.sel.obj === u ? 'sel' : ''}" data-k="${k}"><div class="ic">${ICON[u.type]}</div><div class="nm">${u.name}</div><div class="ss" id="us${k}">${u.status}</div><div class="bars">${u.maxW && u.water !== undefined && (u.type === 'bomba' || u.air) ? `<div class="bar w" title="Agua"><i id="uw${k}" style="width:${u.water / u.maxW * 100}%"></i></div>` : ''}${u.air ? '' : `<div class="bar h" title="Estado de la dotación"><i id="uh${k}" style="width:${u.hp}%"></i></div>`}</div></div>`).join('');
+  $('units').innerHTML = G.units.map((u, k) => `<div class="uc glass ${G.sel && G.sel.obj === u ? 'sel' : ''}" data-k="${k}"><div class="ic">${ICON[u.type]}</div><div class="nm">${u.name}</div><div class="ss" id="us${k}">${u.status}</div><div class="bars">${u.maxW && u.water !== undefined && (u.type === 'bomba' || u.type === 'cisterna' || u.air) ? `<div class="bar w" title="Agua"><i id="uw${k}" style="width:${u.water / u.maxW * 100}%"></i></div>` : ''}${u.air ? '' : `<div class="bar h" title="Estado de la dotación"><i id="uh${k}" style="width:${u.hp}%"></i></div>`}</div></div>`).join('');
   $('units').querySelectorAll('.uc').forEach(el => { el.onclick = () => select({ kind: 'unit', obj: G.units[+el.dataset.k] }); el.ondblclick = () => focusOn(G.units[+el.dataset.k].mesh.position); });
 }
 function updateUnitsUI() {
@@ -1454,7 +1532,8 @@ function renderPanel() {
   if (s.kind === 'unit') {
     const u = s.obj, wPct = Math.round(u.water / u.maxW * 10) * 10;
     const help = {
-      bomba: 'Clic cerca del fuego para atacarlo · clic en agua o en un pueblo para repostar · clic en una casa aislada para evacuarla.',
+      bomba: 'Clic justo donde quieras colocarla: se pone en ese punto (o en el más cercano sin llamas) y ataca. Mejor con el viento a la espalda: a sotavento el calor es mucho mayor · clic en agua, un pueblo o una cisterna para repostar · clic en una casa aislada para evacuarla.',
+      cisterna: 'Clic en el mapa para aparcarla: las autobombas que se queden sin agua repostarán aquí si les queda más cerca que un lago. Con una autobomba seleccionada, clic en la cisterna para mandarla a repostar. Clic en agua o en un pueblo para llenarla.',
       ganado: 'Clic en una granja para recoger el ganado · clic en una casa aislada para evacuarla · clic en la base para descargar.',
       brigada: 'Clic en el mapa para moverla (sube laderas que los camiones no pueden). Pulsa «Trazar cortafuegos» y marca el inicio y el final (máx. 1,2 km).',
       bulldozer: 'Clic en el mapa para moverlo. Pulsa «Trazar cortafuegos» y marca el inicio y el final (máx. 1,2 km). Es rápido, pero no sube pendientes fuertes.',
@@ -1462,9 +1541,9 @@ function renderPanel() {
       avion: 'Clic cerca del fuego para descargar una franja larga en la dirección de vuelo. Carga solo en embalses grandes.',
     }[u.type];
     const cutting = G.mode && G.mode.unit === u;
-    h = `<h3>${ICON[u.type]} ${u.name}</h3><p>${u.status}${u.type === 'bomba' || u.air ? ` · Agua ${wPct}%` : ''}${u.air ? '' : ` · Dotación ${Math.round(u.hp / 10) * 10}%`}</p>
-    <p style="color:var(--muted)">${cutting ? `<span class="mode">✂️ ${G.mode.a == null ? 'Haz clic donde EMPIEZA el cortafuegos' : 'Ahora haz clic donde TERMINA'} · clic derecho para cancelar</span>` : help}</p>
-    <div class="row">${u.type === 'bomba' ? '<button id="pRefill">💧 Repostar</button>' : ''}${u.type === 'brigada' || u.type === 'bulldozer' ? `<button class="act" id="pCutL">✂️ ${cutting ? 'Cancelar' : 'Trazar cortafuegos'}</button>` : ''}<button id="pBase">🏠 Volver a la base</button><button id="pFocus">🎯 Centrar</button></div>`;
+    h = `<h3>${ICON[u.type]} ${u.name}</h3><p>${u.status}${u.type === 'bomba' || u.type === 'cisterna' || u.air ? ` · Agua ${wPct}%` : ''}${u.air ? '' : ` · Dotación ${Math.round(u.hp / 10) * 10}%`}</p>
+    <p style="color:var(--muted)">${cutting ? (G.mode.kind === 'wet' ? '<span class="mode">💦 Haz clic en la zona SIN FUEGO que quieres mojar (unos 200 m de ancho) · clic derecho para cancelar</span>' : `<span class="mode">✂️ ${G.mode.a == null ? 'Haz clic donde EMPIEZA el cortafuegos' : 'Ahora haz clic donde TERMINA'} · clic derecho para cancelar</span>`) : help}</p>
+    <div class="row">${u.type === 'bomba' ? `<button id="pRefill">💧 Repostar</button><button class="act" id="pWet">💦 ${cutting ? 'Cancelar' : 'Mojar zona'}</button>` : u.type === 'cisterna' ? '<button id="pRefill">💧 Llenar ahora</button>' : ''}${u.type === 'brigada' || u.type === 'bulldozer' ? `<button class="act" id="pCutL">✂️ ${cutting ? 'Cancelar' : 'Trazar cortafuegos'}</button>` : ''}<button id="pBase">🏠 Volver a la base</button><button id="pFocus">🎯 Centrar</button></div>`;
   } else if (s.kind === 'line') {
     const L = s.obj, names = L.feeds.map(t => G.towns[t].name).join(' y ');
     h = `<h3>⚡ Línea de alta tensión</h3><p>${{ on: 'En tensión', off: 'Tensión cortada', broken: 'Derribada por el fuego' }[L.state]} · alimenta a ${names}</p>
@@ -1493,6 +1572,7 @@ function renderPanel() {
   b('pClose').onclick = () => select(null);
   if (b('pRefill')) b('pRefill').onclick = () => taskRefill(s.obj, null);
   if (b('pBase')) b('pBase').onclick = () => { if (s.obj.air) { if (s.obj.task.type !== 'parked') { s.obj.task = { type: 'abase' }; s.obj.status = 'Vuelve a la base'; } } else taskBase(s.obj); };
+  if (b('pWet')) b('pWet').onclick = () => { G.mode = G.mode && G.mode.unit === s.obj ? null : { unit: s.obj, kind: 'wet' }; renderPanel(); };
   if (b('pCutL')) b('pCutL').onclick = () => { G.mode = G.mode && G.mode.unit === s.obj ? null : { unit: s.obj, a: null }; renderPanel(); };
   if (b('pCut')) b('pCut').onclick = () => cutPower(s.obj, false);
   if (b('pRestore')) b('pRestore').onclick = () => cutPower(s.obj, true);
@@ -1588,7 +1668,7 @@ function drawMinimap() {
   for (const L of G.lines) { mmx.strokeStyle = L.state === 'on' ? '#ffd23a' : L.state === 'off' ? '#8a8a8a' : '#ff4d5e'; mmx.setLineDash(L.state === 'broken' ? [3, 3] : []); mmx.beginPath(); mmx.moveTo(cx(L.a) * s, cz(L.a) * s); mmx.lineTo(cx(L.b) * s, cz(L.b) * s); mmx.stroke(); }
   mmx.setLineDash([]); mmx.lineWidth = 1;
   for (const u of G.units) {
-    mmx.fillStyle = { bomba: '#ff3344', ganado: '#44dd77', brigada: '#f08a1c', bulldozer: '#f2b705', heli: '#4dd2ff', avion: '#4dd2ff' }[u.type]; mmx.strokeStyle = '#000'; mmx.beginPath();
+    mmx.fillStyle = { bomba: '#ff3344', cisterna: '#c9ccd1', ganado: '#44dd77', brigada: '#f08a1c', bulldozer: '#f2b705', heli: '#4dd2ff', avion: '#4dd2ff' }[u.type]; mmx.strokeStyle = '#000'; mmx.beginPath();
     if (u.air) { const a = u.heading; mmx.moveTo(u.x * s + Math.sin(a) * 6, u.z * s + Math.cos(a) * 6); mmx.lineTo(u.x * s + Math.sin(a + 2.5) * 5, u.z * s + Math.cos(a + 2.5) * 5); mmx.lineTo(u.x * s + Math.sin(a - 2.5) * 5, u.z * s + Math.cos(a - 2.5) * 5); mmx.closePath(); }
     else mmx.arc(u.x * s, u.z * s, 4, 0, 7);
     mmx.fill(); mmx.stroke();
@@ -1786,6 +1866,7 @@ function newGame(seed) {
   let ri = 0; const slot = () => roadNear[ri++] ?? G.base;
   const nb = L.trucks + own('bomba');
   for (let k = 0; k < nb; k++) G.units.push(newUnit('bomba', 'Bomba ' + (k + 1), slot()));
+  for (let k = 0; k < own('cisterna'); k++) G.units.push(newUnit('cisterna', 'Cisterna ' + (k + 1), slot()));
   G.units.push(newUnit('ganado', 'Camión de ganado', slot()));
   if (own('brigada')) G.units.push(newUnit('brigada', 'Brigada forestal', slot()));
   if (own('bulldozer')) G.units.push(newUnit('bulldozer', 'Bulldozer', slot()));
@@ -2008,7 +2089,7 @@ function soundFrame(dt) {
   for (const u of G.units) {
     const s = menu ? { vis: 0, pan: 0 } : screenVis(u.mesh.position);
     const moving = !paused && (u.air ? u.task.type !== 'parked' || u.y > H[u.home] + 1.5 : !!(u.path && u.pi < u.path.length));
-    S.voice(u.name, u.type === 'ganado' ? 'bomba-sin' : u.type, {
+    S.voice(u.name, u.type === 'ganado' || u.type === 'cisterna' ? 'camion' : u.type, {
       vis: s.vis * (u.air ? 1.1 : .9), pan: s.pan, move: moving, fly: moving,
       spray: !paused && u.sprayAt >= 0, siren: u.type === 'bomba' && moving && ['attack', 'rescue', 'refill', 'retreat'].includes(u.task.type),
       work: !paused && u.task.type === 'cut' && !moving,
@@ -2082,7 +2163,7 @@ requestAnimationFrame(frame);
 // Acceso de depuración (pruebas)
 window.RT = {
   get G() { return G; }, ignite, cam, flames, smoke, water, WX, burning: () => burning, order, taskAttack, activateAlarm,
-  get prof() { return prof; }, saveProf, hAt, TUNE, LEVELS, get H() { return H; }, get AMP() { return AMP; }, scene, renderer, sun, sky, get world() { return world; }, get trees() { return trees; }, get terrain() { return terrain; }, bloom, airOrder, startCut, line4, cutPower, newGame, clickAt, get STATE() { return STATE; }, get VEG() { return VEG; }, get WET() { return WET; }, sunElev,
+  get prof() { return prof; }, saveProf, hAt, TUNE, LEVELS, startWet, get H() { return H; }, get AMP() { return AMP; }, scene, renderer, sun, sky, get world() { return world; }, get trees() { return trees; }, get terrain() { return terrain; }, bloom, airOrder, startCut, line4, cutPower, newGame, clickAt, get STATE() { return STATE; }, get VEG() { return VEG; }, get WET() { return WET; }, sunElev,
   sim(sec) { const t0 = performance.now(); for (let k = 0; k < sec / STEP && !G.over; k++) simStep(STEP); updateVisuals(.05, .05); updateCamera(1); updateLabels(); updateHUD(); drawMinimap(); render(); return Math.round(performance.now() - t0) + ' ms'; },
   frame() { updateCamera(1); updateVisuals(.05, .05); updateLabels(); updateHUD(); layoutTop(); drawMinimap(); updateArrows(); render(); }
 };
