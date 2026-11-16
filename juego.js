@@ -1,5 +1,6 @@
-// Rescue Team — fases 1 y 2
+// Línea de Fuego — juego de extinción de incendios forestales
 import * as THREE from 'three';
+import * as S from './sonido.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -49,13 +50,15 @@ V.BREAK = 9;
 const MAXCUT = 40; // longitud máxima de un cortafuegos (celdas)
 const DX8 = [1, -1, 0, 0, 1, 1, -1, -1], DZ8 = [0, 0, 1, -1, 1, -1, 1, -1], DL8 = [1, 1, 1, 1, Math.SQRT2, Math.SQRT2, Math.SQRT2, Math.SQRT2];
 const HA_CELL = 0.09; // cada celda ≈ 30 × 30 m
+// ajuste global del fuego: velocidad base, peso del viento, frecuencia de pavesas, potencia de las mangueras
+const TUNE = { K: .1, W: .11, spot: .6, hose: 1 }; // calibrado con partidas automáticas (16/11/2026)
 
 const LEVELS = [
-  { foci: 1, wind: 14, drought: .45, rolada: 110, rain: .45, storm: false, limit: 4e6, trucks: 2, hour: 12, k: .85, desc: '1 foco · viento suave' },
+  { foci: 1, wind: 14, drought: .45, rolada: 110, rain: .45, storm: false, limit: 4e6, trucks: 2, hour: 12, k: .95, desc: '1 foco · viento suave' },
   { foci: 1, wind: 22, drought: .55, rolada: 85, rain: .35, storm: false, limit: 4.5e6, trucks: 2, hour: 15, k: .95, desc: '1 foco · se hace de noche' },
-  { foci: 2, wind: 28, drought: .65, rolada: 70, rain: .25, storm: true, limit: 5e6, trucks: 3, hour: 13, k: 1, desc: '2 focos · tormentas secas' },
-  { foci: 2, wind: 36, drought: .75, rolada: 55, rain: .15, storm: true, limit: 5.5e6, trucks: 3, hour: 17, k: 1.08, desc: '2 focos · viento fuerte' },
-  { foci: 3, wind: 46, drought: .85, rolada: 45, rain: .08, storm: true, limit: 6e6, trucks: 3, hour: 19, k: 1.15, desc: '3 focos · ola de calor' },
+  { foci: 2, wind: 28, drought: .65, rolada: 70, rain: .25, storm: true, limit: 5e6, trucks: 3, hour: 13, k: .78, desc: '2 focos · tormentas secas' },
+  { foci: 2, wind: 36, drought: .75, rolada: 55, rain: .15, storm: true, limit: 5.5e6, trucks: 3, hour: 17, k: .75, desc: '2 focos · viento fuerte' },
+  { foci: 3, wind: 46, drought: .85, rolada: 45, rain: .08, storm: true, limit: 6e6, trucks: 3, hour: 19, k: .62, desc: '3 focos · ola de calor' },
 ];
 // ───────────── Progreso del jugador y tienda ─────────────
 const SHOP = [
@@ -468,7 +471,8 @@ function generate(seed) {
   G.foci = []; tries = 0;
   while (G.foci.length < G.L.foci && tries++ < 5000) {
     const c = Math.floor(R() * NN); if (![V.PINE, V.SHRUB, V.OAK].includes(VEG[c])) continue;
-    if (G.towns.some(t => cheb(t.cell, c) < 28) || cheb(c, base) < 30 || G.houses.some(h => cheb(h.cell, c) < 26) || G.farms.some(f => cheb(f.cell, c) < 20)) continue;
+    const lv = LEVELS.indexOf(G.L); // en niveles altos el fuego corre más: los focos nacen más lejos de la gente
+    if (G.towns.some(t => cheb(t.cell, c) < 28 + lv * 2) || cheb(c, base) < 30 || G.houses.some(h => cheb(h.cell, c) < 26 + lv * 2) || G.farms.some(f => cheb(f.cell, c) < 20)) continue;
     if (G.foci.some(f => cheb(f, c) < 25)) continue;
     G.foci.push(c);
   }
@@ -867,11 +871,14 @@ function lightning() {
     const c = Math.floor(R() * NN);
     if (![V.PINE, V.SHRUB, V.OAK, V.GRASS].includes(VEG[c]) || STATE[c] !== 0) continue;
     if (G.towns.some(t => cheb(t.cell, c) < 12) || G.houses.some(h => cheb(h.cell, c) < 6)) continue;
-    if (R() < .55) { ignite(c); log(`⚡ Un rayo ha provocado un nuevo foco cerca de ${nearestPlace(c)}.`, 'bad'); }
+    const near = Math.hypot(wx(cx(c)) - cam.tx, wx(cz(c)) - cam.tz) < 300; S.thunder(near ? .1 : .4 + Math.random() * 1.6, near);
+    if (R() < .55) { ignite(c); addAlert(c, '⚡ Foco por rayo'); log(`⚡ Un rayo ha provocado un nuevo foco cerca de ${nearestPlace(c)}.`, 'bad'); }
     else log('⚡ Ha caído un rayo, pero no ha prendido.', 'info');
     return;
   }
 }
+// focos nuevos que merecen una flecha de aviso (se agrupan si están cerca)
+function addAlert(c, txt) { if (!G.alerts) G.alerts = []; if (G.alerts.some(a => cheb(a.cell, c) < 15 && G.t - a.t < 25)) return; G.alerts.push({ cell: c, t: G.t, txt }); }
 function nearestPlace(c) { let best = null, bd = 1e9; for (const t of G.towns) { const d = cheb(t.cell, c); if (d < bd) { bd = d; best = t.name; } } return best; }
 
 // ───────────── Fuego ─────────────
@@ -886,7 +893,7 @@ function addDamage(e) { G.damage += e; if (G.damage > G.limit && !G.over) endGam
 function fireStep(dt) {
   const wsm = WX.ws / 3.6, wvx = Math.sin(WX.wind), wvz = -Math.cos(WX.wind);
   const dryG = clamp(1 - WX.hum * .85, .05, 1) * (.55 + G.L.drought * .6);
-  const K = .34 * G.L.k * (G.tut ? .55 : 1);
+  const K = TUNE.K * G.L.k * (G.tut ? .8 : 1);
   for (let k = burning.length - 1; k >= 0; k--) {
     const i = burning[k], vp = VP[VEG[i]];
     BT[i] += dt; const ph = BT[i] / vp.burn;
@@ -907,19 +914,19 @@ function fireStep(dt) {
       const sp = VP[VEG[n]].spread; if (!sp || FUEL[n] < .05) continue;
       const dry = dryG * (1 - MOI[n] * .45) - WET[n] * 1.5; if (dry <= 0) continue;
       const cosA = (DX8[d] * wvx + DZ8[d] * wvz) / DL8[d];
-      const W = Math.exp(.15 * wsm * cosA);
+      const W = Math.exp(TUNE.W * wsm * cosA);
       const Sl = clamp(Math.exp(1.6 * (H[n] - H[i]) / (CELL * DL8[d])), .35, 4);
       const rate = K * sp * env * W * Sl * dry * (s === 3 ? FUEL[n] : 1) / DL8[d];
       if (R() < rate * dt) ignite(n);
     }
     // pavesas
-    if (vp.spot && wsm > 4.5 && R() < dt * .007 * vp.spot * env * (wsm / 8) ** 2 * dryG) {
+    if (vp.spot && wsm > 4.5 && R() < dt * .007 * TUNE.spot * vp.spot * env * (wsm / 8) ** 2 * dryG) {
       const dist = 3 + R() * wsm * .9, a = WX.wind + (R() - .5) * .7;
       const tx = Math.round(x + Math.sin(a) * dist), tz = Math.round(z - Math.cos(a) * dist);
       if (tx >= 0 && tz >= 0 && tx < N && tz < N) {
         const n = tz * N + tx;
         for (let e = 0; e < 6; e++) flames.add(wx(x), H[i] + 12, wx(z), Math.sin(a) * wsm * 2 + rr(-3, 3), rr(8, 14), -Math.cos(a) * wsm * 2 + rr(-3, 3), rr(1.5, 3), 1.2, .6, [1, .8, .4], [1, .3, .05], 1);
-        if (STATE[n] === 0 && VP[VEG[n]].spread && R() < dryG * (1 - MOI[n] * .4)) { if (ignite(n) && !G.spotWarned) { G.spotWarned = true; log('🔥 ¡Las pavesas han saltado y abierto un foco secundario por delante del frente!', 'bad'); } }
+        if (STATE[n] === 0 && VP[VEG[n]].spread && R() < dryG * (1 - MOI[n] * .4)) { if (ignite(n)) { if (DIST[n] > 6) addAlert(n, '🔥 Foco por pavesas'); if (!G.spotWarned) { G.spotWarned = true; log('🔥 ¡Las pavesas han saltado y abierto un foco secundario por delante del frente!', 'bad'); } } }
       }
     }
   }
@@ -936,7 +943,7 @@ function slowTick() {
   // avisos
   for (const t of G.towns) {
     const d = Math.min(...t.houses.filter(h => h.state !== 'destroyed').map(h => DIST[h.cell]).concat([255]));
-    if (!t.alarm && d < 24 && t.warned < 1) { t.warned = 1; log(`🚨 El fuego está a menos de 700 m de <b>${t.name}</b>. ¡Activa la alarma de evacuación!`, 'bad'); }
+    if (!t.alarm && d < 28 && t.warned < 1) { t.warned = 1; log(`🚨 El fuego está a menos de 850 m de <b>${t.name}</b>. ¡Activa la alarma de evacuación!`, 'bad'); }
     if (!t.alarm && d < 10 && t.warned < 2) { t.warned = 2; log(`🚨 ¡El fuego entra en <b>${t.name}</b> y la gente sigue en sus casas!`, 'bad'); }
   }
   for (const h of G.houses) if (h.town < 0 && h.people > 0 && DIST[h.cell] < 26 && !h.warned) { h.warned = 1; log(`🏠 Hay ${h.people} personas en <b>${h.name}</b> y el fuego se acerca. Envía un vehículo a avisarles.`, 'warn'); }
@@ -960,6 +967,7 @@ function linesTick() {
     let hit = -1; for (const c of s.cells) if (STATE[c] === 1 && INT[c] > .45) { hit = c; break; }
     if (hit >= 0) {
       const was = s.state; s.state = 'broken'; s.wire.visible = false; addDamage(300000); updatePower();
+      for (const u of G.units) if (u.task.blocked != null) { u.task = { type: 'drop', target: u.task.blocked }; u.status = 'Hacia la descarga'; } // ya no hay corriente
       if (was === 'on') {
         let n = 0; for (let k = 0; k < 30 && n < 2; k++) { const c = hit + Math.round(rr(-4, 4)) * N + Math.round(rr(-4, 4)); if (c >= 0 && c < NN && STATE[c] === 0 && ignite(c)) n++; }
         log(`⚡ ¡El fuego ha derribado la línea de alta tensión! Los cables con corriente han provocado ${n ? 'nuevos focos' : 'chispazos'}. ${s.feeds.map(t => G.towns[t].name).join(' y ')} sin luz.`, 'bad');
@@ -969,7 +977,7 @@ function linesTick() {
     // chispazos con viento fuerte
     if (s.state === 'on' && WX.ws > 32 && R() < .0025 * (WX.ws - 32) / 10 * (.5 + G.L.drought)) {
       const cand = s.cells.filter(c => STATE[c] === 0 && VP[VEG[c]].spread > 0);
-      if (cand.length) { const c = cand[Math.floor(R() * cand.length)]; if (ignite(c)) { const p = cellWorld(c); for (let e = 0; e < 25; e++) flames.add(p.x, p.y + 18, p.z, rr(-6, 6), rr(-4, 4), rr(-6, 6), rr(.5, 1.2), 1.4, .4, [1, 1, .8], [1, .5, .1], 1); log('⚡ Las rachas han hecho chocar los cables del tendido eléctrico: ¡un chispazo ha provocado un foco nuevo!', 'bad'); } }
+      if (cand.length) { const c = cand[Math.floor(R() * cand.length)]; if (ignite(c)) { addAlert(c, '⚡ Chispazo en la línea'); const p = cellWorld(c); for (let e = 0; e < 25; e++) flames.add(p.x, p.y + 18, p.z, rr(-6, 6), rr(-4, 4), rr(-6, 6), rr(.5, 1.2), 1.4, .4, [1, 1, .8], [1, .5, .1], 1); log('⚡ Las rachas han hecho chocar los cables del tendido eléctrico: ¡un chispazo ha provocado un foco nuevo!', 'bad'); } }
     }
   }
   for (const t of G.towns) if (!t.powered) addDamage(400);
@@ -1018,7 +1026,7 @@ function activateAlarm(t) {
   // elige la salida más segura
   const safety = p => p.length ? Math.min(...p.map(c => DIST[c])) : -1;
   t.exit = safety(t.paths[0]) >= safety(t.paths[1]) ? 0 : 1;
-  for (const h of t.houses) if (h.people > 0) h.leaveAt = G.t + rr(2, 22);
+  for (const h of t.houses) if (h.people > 0) h.leaveAt = G.t + rr(2, 12);
   log(`🚨 Alarma activada en <b>${t.name}</b>. Los vecinos evacúan por carretera.`, 'info');
 }
 function carsStep(dt) {
@@ -1067,7 +1075,7 @@ function wildStep(dt) {
 function newUnit(type, name, cell) {
   const wet = type === 'bomba' || type === 'heli' || type === 'avion', maxW = 100 * (1 + .25 * own('tank'));
   const u = { type, name, cell, x: cx(cell), z: cz(cell), heading: 0, path: null, pi: 0, task: { type: 'idle' }, water: wet ? maxW : 0, maxW, hp: 100, carry: 0, carryFarm: null, work: 0, sprayAt: -1, status: 'En la base' };
-  if (AIR[type]) { u.air = true; u.home = cell; u.y = H[cell] + 2; u.task = { type: 'parked' }; }
+  if (AIR[type]) { u.air = true; u.home = cell; u.y = H[cell] + 2; u.task = { type: 'parked' }; u.ready = type === 'heli' ? 18 : 30; } // tiempo de alerta de la tripulación
   return u;
 }
 function setPath(u, path) { if (!path) return false; u.path = path; u.pi = 0; return true; }
@@ -1101,6 +1109,7 @@ function nearestScoop(u, target) {
   return best;
 }
 function airOrder(u, c) {
+  if (G.t < u.ready) { u.pending = c; u.status = `Despega en ${Math.ceil(u.ready - G.t)} s · orden guardada`; return; }
   const g = airGrounded(u.type === 'heli');
   if (g) return log(`⛔ ${u.name} no puede despegar: ${g === 'noche' ? 'no hay vuelo nocturno' : 'el viento supera los 60 km/h'}.`, 'warn');
   if (VEG[c] === V.WATER) {
@@ -1128,7 +1137,7 @@ function doDrop(u, T) {
   const y = u.y;
   for (const c of cells) for (let e = 0; e < 6; e++) water.add(wx(cx(c)) + rr(-3, 3), y - rr(2, 7), wx(cz(c)) + rr(-3, 3), rr(-2, 2), rr(-10, -3), rr(-2, 2), rr(.8, 1.3), 3, 10, [.82, .9, 1], [.95, .97, 1], .5);
   for (let e = 0; e < cells.length; e += 2) { const c = cells[e]; smoke.add(wx(cx(c)), H[c] + 3, wx(cz(c)), rr(-2, 2), rr(1, 3), rr(-2, 2), rr(4, 7), 8, 26, [.85, .88, .92], [.9, .92, .95], .45); }
-  u.water = 0; G.stats.drops++;
+  u.water = 0; G.stats.drops++; S.splash(screenVis(cellWorld(T.target)).vis);
   const nb = findBurningNear(T.target, 8);
   if (nb >= 0) { u.task = { type: 'scoop', src: nearestScoop(u, nb), resume: nb }; u.status = 'Rotación: a cargar agua'; }
   else { u.task = { type: 'wait' }; u.status = 'Descarga hecha · sin llamas cerca'; }
@@ -1169,6 +1178,8 @@ function airStep(u, dt) {
       break;
     case 'parked':
       yAbs = H[u.home] + .2; u.water = Math.min(u.maxW, u.water + 8 * dt);
+      if (G.t < u.ready) { u.status = u.pending != null ? `Despega en ${Math.ceil(u.ready - G.t)} s · orden guardada` : `Tripulación preparándose · ${Math.ceil(u.ready - G.t)} s`; break; }
+      if (u.pending != null) { const c = u.pending; u.pending = null; airOrder(u, c); break; }
       u.status = g ? (g === 'noche' ? 'En la base · sin vuelo nocturno' : 'En la base · viento') : 'En la base';
       break;
   }
@@ -1220,10 +1231,11 @@ function spray(u, dt) {
   const t = findBurningNear(u.cell, 5);
   if (t < 0 || u.water <= 0) { u.sprayAt = -1; return false; }
   u.sprayAt = t; u.water = Math.max(0, u.water - 4 * dt);
-  const ef = 1 + .2 * own('ret');
+  const ef = (1 + .2 * own('ret')) * TUNE.hose;
   WET[t] = Math.min(1.6, WET[t] + .6 * ef * dt);
   const x = cx(t), z = cz(t);
-  for (let d = 0; d < 8; d++) { const nx = x + DX8[d], nz = z + DZ8[d]; if (nx >= 0 && nz >= 0 && nx < N && nz < N) WET[nz * N + nx] = Math.min(1.6, WET[nz * N + nx] + .2 * ef * dt); }
+  // el chorro moja una franja de 3×3 alrededor del objetivo
+  for (let d = 0; d < 8; d++) { const nx = x + DX8[d], nz = z + DZ8[d]; if (nx >= 0 && nz >= 0 && nx < N && nz < N) { const n = nz * N + nx; WET[n] = Math.min(1.6, WET[n] + (STATE[n] === 1 ? .42 : .2) * ef * dt); changed.push(n); } }
   changed.push(t);
   return true;
 }
@@ -1407,7 +1419,7 @@ function clickAt(sx, sy) {
   const su = unitAtScreen(sx, sy); if (su) return select({ kind: 'unit', obj: su });
   if (!p) return;
   const ent = entityAt(p);
-  if (G.sel && G.sel.kind === 'unit') { order(G.sel.obj, p, ent); destRing.visible = true; destRing.position.copy(p.point).y += .5; destRing.userData.t = 1.5; return; }
+  if (G.sel && G.sel.kind === 'unit') { S.ui('click'); order(G.sel.obj, p, ent); destRing.visible = true; destRing.position.copy(p.point).y += .5; destRing.userData.t = 1.5; return; }
   select(ent || { kind: 'cell', obj: p.cell });
 }
 function select(ent) { G.sel = ent; G.mode = null; renderPanel(); renderUnits(); }
@@ -1415,10 +1427,13 @@ function select(ent) { G.sel = ent; G.mode = null; renderPanel(); renderUnits();
 // ───────────── Interfaz ─────────────
 const money = e => e >= 1e6 ? (e / 1e6).toFixed(2).replace('.', ',') + ' M€' : Math.round(e / 1000) + ' mil €';
 const fmtHa = c => (c * HA_CELL).toFixed(1).replace('.', ',') + ' ha';
+const fmtMin = m => m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0') + ' min';
 // en pantallas táctiles, los textos hablan de tocar en vez de hacer clic
 const tactil = s => s.replace(/clic derecho para cancelar/g, 'pulsa «Cancelar» para anular').replace(/Haz clic/g, 'Toca').replace(/haz clic/g, 'toca').replace(/Clic/g, 'Toca').replace(/clic/g, 'toca');
 function log(html, kind = '') {
+  if (G && G.demo) return; // la portada no muestra avisos
   if (IS_TOUCH) html = tactil(html);
+  if (kind === 'bad') S.ui('bad'); else if (kind === 'warn') S.ui('radio'); else if (kind === 'ok') S.ui('ok');
   const el = document.createElement('div'); el.className = 'msg ' + kind; el.innerHTML = html; $('log').prepend(el);
   while ($('log').children.length > 6) $('log').lastChild.remove();
   setTimeout(() => { el.style.transition = 'opacity 1s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 1000); }, 14000);
@@ -1755,6 +1770,7 @@ function updateVisuals(dt, gdt) {
 function newGame(seed) {
   lastSeed = seed;
   if (tut) { tutClear(); $('coach').classList.remove('show'); tut = null; }
+  S.clearVoices();
   const L = LEVELS[lvlIdx];
   let ok = false, s = seed;
   for (let k = 0; k < 25 && !ok; k++) {
@@ -1785,7 +1801,9 @@ function newGame(seed) {
   makeLabels(); renderUnits(); renderPanel();
   $('log').innerHTML = '';
   for (const f of G.foci) ignite(f);
-  G.stats.cells = 0; G.damage = 0; // los focos iniciales no cuentan
+  // cuando llega el aviso del 112 el fuego ya lleva un rato ardiendo (más cuanto más alto el nivel)
+  if (!G.demo) { const pre = 8 + lvlIdx * 4; for (let k = 0; k < pre / STEP; k++) fireStep(STEP); }
+  G.damage = 0; G.stats.rekindle = 0; // lo quemado antes del aviso no cuenta como daño
   for (const f of G.foci) AFF[f] = 1;
   const f0 = cellWorld(G.foci[0]); cam.tx = f0.x; cam.tz = f0.z; cam.dist = 420; cam.yaw = Math.atan2(cellWorld(G.base).x - f0.x, cellWorld(G.base).z - f0.z);
   $('lvlLab').textContent = `Nivel ${lvlIdx + 1} · mapa #${G.seed % 100000}`;
@@ -1796,20 +1814,28 @@ function newGame(seed) {
 function endGame(win, reason) {
   if (G.over) return; G.over = true;
   if (G.tut) tutEnd(win);
+  S.ui(win ? 'win' : 'lose');
   const s = G.stats, total = NN, burned = s.cells;
   const wildAlive = G.wild.filter(a => a.alive).length;
   let xp = 0;
   if (G.tut) { xp = win ? 300 : 50; prof.tut = 1; }
   else if (win) xp = Math.max(50, Math.round(400 * (lvlIdx + 1) + (1 - burned / 1500) * 600 + s.evac * 4 + wildAlive * 6 + s.stockSaved * 5 - G.damage / 20000 - s.houses * 30));
   else xp = Math.round(Math.max(0, s.evac * 2 + s.stockSaved * 2));
-  let unlocked = false;
+  let unlocked = false, recs = [];
   if (!G.demo) {
     prof.xp += xp;
+    // récords del nivel: menor superficie quemada y menor tiempo de juego
+    if (win && !G.tut) {
+      const r = ((prof.rec ||= {})[lvlIdx] ||= {}), ha = burned * HA_CELL, min = Math.round(G.t * 2);
+      if (r.ha == null || ha < r.ha) { if (r.ha != null) recs.push('menos superficie quemada'); r.ha = ha; }
+      if (r.min == null || min < r.min) { if (r.min != null) recs.push('extinción más rápida'); r.min = min; }
+      r.wins = (r.wins || 0) + 1;
+    }
     if (win && !G.tut && lvlIdx + 1 > prof.maxLvl && lvlIdx + 1 < LEVELS.length) { prof.maxLvl = lvlIdx + 1; unlocked = true; }
     saveProf(); renderLevels();
   }
   $('endT').textContent = win ? '🎉 Incendio extinguido' : '💀 Fin de la partida';
-  $('endP').innerHTML = win ? `Has controlado el incendio a las ${$('clock').textContent}.` : reason;
+  $('endP').innerHTML = win ? `Has controlado el incendio a las ${$('clock').textContent}, tras ${fmtMin(Math.round(G.t * 2))} de trabajo.${recs.length ? `<br><b style="color:var(--warn)">🏆 ¡Nuevo récord del nivel ${lvlIdx + 1}: ${recs.join(' y ')}!</b>` : ''}` : reason;
   const row = (a, b) => `<div><span>${a}</span><b>${b}</b></div>`;
   $('endR').innerHTML = row('Superficie quemada', fmtHa(burned)) + row('Daños', money(G.damage)) + row('Casas destruidas', s.houses) + row('Personas evacuadas', s.evac) + row('Fauna salvaje viva', `${wildAlive} / ${G.wild.length}`) + row('Ganado salvado', s.stockSaved) + row('Ganado muerto', s.stockDead) + row('Víctimas', s.victims) + row('Rebrotes', s.rekindle) + row('Descargas aéreas', s.drops) + row('Cortafuegos abiertos', Math.round(s.breaks * 30) + ' m');
   $('endX').innerHTML = `+${xp} XP <span style="font-size:14px;color:var(--muted);font-weight:600">· total ${prof.xp} XP${unlocked ? ` · 🔓 Nivel ${lvlIdx + 2} desbloqueado` : ''}</span>`;
@@ -1871,7 +1897,7 @@ $('bTut').onclick = () => { $('ovStart').classList.remove('show'); startTutorial
 function renderLevels() {
   if (!prof.tut) $('bTut').classList.add('go'); else $('bTut').classList.remove('go');
   if (lvlIdx > prof.maxLvl) lvlIdx = prof.maxLvl;
-  $('lvls').innerHTML = LEVELS.map((L, k) => `<button data-k="${k}" class="${k === lvlIdx ? 'on' : ''}" ${k > prof.maxLvl ? 'disabled title="Supera el nivel anterior para desbloquearlo"' : ''}><b>${k > prof.maxLvl ? '🔒' : k + 1}</b><small>${L.desc}</small></button>`).join('');
+  $('lvls').innerHTML = LEVELS.map((L, k) => `<button data-k="${k}" class="${k === lvlIdx ? 'on' : ''}" ${k > prof.maxLvl ? 'disabled title="Supera el nivel anterior para desbloquearlo"' : ''}><b>${k > prof.maxLvl ? '🔒' : k + 1}</b><small>${L.desc}</small>${(prof.rec || {})[k] ? `<span class="rec">🏆 ${prof.rec[k].ha.toFixed(1).replace('.', ',')} ha · ${fmtMin(prof.rec[k].min)}</span>` : ''}</button>`).join('');
   $('lvls').querySelectorAll('button').forEach(b => b.onclick = () => { lvlIdx = +b.dataset.k; renderLevels(); });
   $('xpTot').textContent = prof.xp + ' XP';
 }
@@ -1925,6 +1951,80 @@ function resize() {
 }
 $('bHQ').onclick = () => { hq = !hq; try { localStorage.setItem('rt-hq', hq ? '1' : '0'); } catch (e) { } applyQuality(); };
 addEventListener('resize', resize); applyQuality();
+// ───────────── Flechas de aviso: peligros fuera de la pantalla ─────────────
+const arrowEls = new Map(), av = new THREE.Vector3();
+function updateArrows() {
+  const box = $('arrows'); if (!G || G.demo || G.over) { box.innerHTML = ''; arrowEls.clear(); return; }
+  const list = [], pop = t => t.houses.reduce((a, h) => a + h.people, 0);
+  for (const t of G.towns) { const p = pop(t); if (p && t.warned) list.push({ key: 't' + t.id, pos: cellWorld(t.cell), txt: `${t.name} · 👥 ${p}`, bad: t.warned >= 2 || !t.alarm, sel: { kind: 'town', obj: t } }); }
+  for (const h of G.houses) if (h.town < 0 && h.people && h.warned) list.push({ key: 'h' + h.id, pos: h.pos, txt: `🏠 ${h.name}`, bad: DIST[h.cell] < 12, sel: { kind: 'house', obj: h } });
+  for (const f of G.farms) if (f.state === 'waiting' && f.warned) list.push({ key: 'f' + f.id, pos: f.grp.position, txt: `${f.kind === 'ovejas' ? '🐑' : '🐄'} ${f.name}`, bad: DIST[f.cell] < 10, sel: { kind: 'farm', obj: f } });
+  for (const a of G.alerts || []) if (G.t - a.t < 40 && DIST[a.cell] < 4) list.push({ key: 'a' + a.cell, pos: cellWorld(a.cell), txt: a.txt, bad: true });
+  for (const u of G.units) if (u.hp < 45) list.push({ key: 'u' + u.name, pos: u.mesh.position, txt: `🥵 ${u.name}`, bad: true, sel: { kind: 'unit', obj: u } });
+  const W = innerWidth, Hh = innerHeight, top = $('top').getBoundingClientRect().bottom + 24, bottom = Hh - (innerWidth <= 640 ? 140 : 40), seen = new Set(), placed = [];
+  for (const it of list) {
+    av.copy(it.pos).project(camera); let x = av.x, y = av.y;
+    if (av.z > 1) { x = -x; y = -y; if (Math.abs(x) < 1 && Math.abs(y) < 1) { const m = Math.max(Math.abs(x), Math.abs(y)) || 1; x /= m; y /= m; } }
+    else if (Math.abs(x) <= 1 && Math.abs(y) <= 1) continue; // está en pantalla: ya tiene su etiqueta
+    const m = Math.max(Math.abs(x) / .92, Math.abs(y) / .9); x /= m; y /= m;
+    const px = clamp((x + 1) / 2 * W, 40, W - 40); let py = clamp((1 - y) / 2 * Hh, top, bottom);
+    for (let g = 0; g < 8 && placed.some(q => Math.abs(q[0] - px) < 150 && Math.abs(q[1] - py) < 26); g++) py = py + 28 > bottom ? py - 28 * (g + 2) : py + 28; // sin montarse
+    placed.push([px, py]);
+    let el = arrowEls.get(it.key);
+    if (!el) { el = document.createElement('div'); el.innerHTML = '<i>➤</i><span></span>'; box.appendChild(el); arrowEls.set(it.key, el); }
+    el.className = 'arw' + (it.bad ? ' bad' : ''); el.style.top = py + 'px';
+    // pegada al borde por el que queda el objetivo, sin salirse de la pantalla
+    if (x > .9) { el.style.left = (W - 10) + 'px'; el.style.transform = 'translate(-100%,-50%)'; el.style.flexDirection = 'row-reverse'; }
+    else if (x < -.9) { el.style.left = '10px'; el.style.transform = 'translate(0,-50%)'; el.style.flexDirection = 'row'; }
+    else { el.style.left = clamp(px, 90, W - 90) + 'px'; el.style.transform = 'translate(-50%,-50%)'; el.style.flexDirection = 'row'; }
+    el.firstChild.style.transform = `rotate(${Math.atan2(-y, x) * 180 / Math.PI}deg)`;
+    if (el.lastChild.textContent !== it.txt) el.lastChild.textContent = it.txt;
+    el.onclick = () => { focusOn(it.pos); cam.dist = Math.min(cam.dist, 360); if (it.sel) select(it.sel); };
+    seen.add(it.key);
+  }
+  for (const [k, el] of arrowEls) if (!seen.has(k)) { el.remove(); arrowEls.delete(k); }
+}
+// ───────────── Sonido: qué se oye y con qué fuerza ─────────────
+// Un medio solo suena si está en pantalla o a punto de entrar: el volumen sube según se acerca al borde de la vista
+const sv = new THREE.Vector3();
+function screenVis(pos, lift = 2) {
+  sv.set(pos.x, pos.y + lift, pos.z).project(camera);
+  if (sv.z > 1) return { vis: 0, pan: 0 };
+  const out = Math.hypot(Math.max(0, Math.abs(sv.x) - 1), Math.max(0, Math.abs(sv.y) - 1)); // 0 = dentro de la pantalla
+  const edge = clamp(1 - out / .45, 0, 1), dist = camera.position.distanceTo(pos);
+  return { vis: edge * edge * clamp(320 / dist, .3, 1.15), pan: clamp(sv.x, -1.2, 1.2) };
+}
+let sndAcc = 0;
+function soundFrame(dt) {
+  if (!S.ready() || !G) return;
+  sndAcc += dt; if (sndAcc < .08) return; sndAcc = 0;
+  const menu = $('ovStart').classList.contains('show'), paused = (!G.speed && !G.demo) || G.over;
+  // fuego que se ve (muestra de hasta 120 celdas ardiendo)
+  let f = 0; const nb = burning.length, step = Math.max(1, Math.floor(nb / 120));
+  for (let k = 0; k < nb; k += step) { const i = burning[k], p = cellWorld(i), s = screenVis(p, 4); f += s.vis * INT[i] * step; }
+  const night = 1 - smooth(-.1, .25, sunElev());
+  S.ambient({ wind: clamp(WX.ws / 60, 0, 1), gust: clamp(WX.gust / 30, 0, 1), rain: WX.rain, night, fire: clamp(f / 45, 0, 1), paused });
+  // medios
+  for (const u of G.units) {
+    const s = menu ? { vis: 0, pan: 0 } : screenVis(u.mesh.position);
+    const moving = !paused && (u.air ? u.task.type !== 'parked' || u.y > H[u.home] + 1.5 : !!(u.path && u.pi < u.path.length));
+    S.voice(u.name, u.type === 'ganado' ? 'bomba-sin' : u.type, {
+      vis: s.vis * (u.air ? 1.1 : .9), pan: s.pan, move: moving, fly: moving,
+      spray: !paused && u.sprayAt >= 0, siren: u.type === 'bomba' && moving && ['attack', 'rescue', 'refill', 'retreat'].includes(u.task.type),
+      work: !paused && u.task.type === 'cut' && !moving,
+    });
+  }
+  // sirenas de evacuación en los pueblos con alarma y gente dentro
+  for (const t of G.towns) {
+    const pop = t.houses.reduce((a, h) => a + h.people, 0), s = menu ? { vis: 0 } : screenVis(cellWorld(t.cell), 10);
+    S.voice('pueblo' + t.id, 'pueblo', { vis: s.vis, pan: s.pan, siren: t.alarm && pop > 0 && !G.over });
+  }
+}
+const sndStart = () => { S.init(); $('bSnd').classList.toggle('on', S.isOn()); };
+addEventListener('pointerdown', sndStart); addEventListener('keydown', sndStart);
+document.addEventListener('visibilitychange', () => S.suspend(document.hidden));
+$('bSnd').onclick = () => { S.init(); S.setMuted(S.isOn()); $('bSnd').textContent = S.isOn() ? '🔊' : '🔇'; $('bSnd').classList.toggle('on', S.isOn()); };
+$('bSnd').textContent = S.isOn() ? '🔊' : '🔇';
 // coloca el tutorial, los mensajes y el panel debajo de la barra superior sin que se tapen
 function layoutTop() {
   let y = $('top').getBoundingClientRect().bottom + 8; const co = $('coach');
@@ -1946,21 +2046,43 @@ function frame(now) {
     if (autoQ.s.length >= 90) { autoQ.s.sort((a, b) => a - b); const med = autoQ.s[45]; autoQ.done = true; if (med > 45) { hq = false; applyQuality(); log('⚙️ Tu equipo iba justo y he bajado la calidad gráfica a media para que vaya más fluido. Puedes cambiarla con el botón HD.', 'info'); } }
   }
   if (!G) { render(); return; }
-  const gdt = G.over ? 0 : dt * G.speed;
-  if (!G.over) { acc += gdt; let n = 0; while (acc >= STEP && n++ < 12) { simStep(STEP); acc -= STEP; } }
-  updateCamera(dt); updateVisuals(dt, gdt); updateLabels();
+  const gdt = G.demo ? dt : G.over ? 0 : dt * G.speed;
+  if (G.demo) demoStep(dt);
+  else if (!G.over) { acc += gdt; let n = 0; while (acc >= STEP && n++ < 12) { simStep(STEP); acc -= STEP; } }
+  updateCamera(dt); updateVisuals(dt, gdt); updateLabels(); soundFrame(dt); updateArrows();
   hudAcc += dt; if (hudAcc > .25) { hudAcc = 0; updateHUD(); updateHover(); layoutTop(); }
   mmAcc += dt; if (mmAcc > .5) { mmAcc = 0; drawMinimap(); }
   render();
 }
-// Escena de fondo para el menú
+// Portada cinemática: un incendio real arde de fondo y la cámara lo rodea despacio
+function demoStep(dt) {
+  acc += dt * (burning.length < 350 ? 3 : 1); let n = 0; // el incendio de fondo crece rápido hasta verse bien
+  while (acc >= STEP && n++ < 8) { weatherStep(STEP); fireStep(STEP); acc -= STEP; }
+  WX.time -= dt * 1.4; // en la portada el atardecer dura más
+  WX.nextRolada = 1e9; // sin avisos ni roladas en la portada
+  if (burning.length < 4) { // que nunca se apague del todo
+    const f = G.foci[0]; for (let k = 0; k < 40; k++) { const c = clamp(cz(f) + Math.round(rr(-14, 14)), 1, N - 2) * N + clamp(cx(f) + Math.round(rr(-14, 14)), 1, N - 2); if (STATE[c] === 0 && VP[VEG[c]].spread > 0) { ignite(c); break; } }
+  }
+  const t = performance.now() / 1000;
+  cam.yaw += dt * .045; cam.dist = 250 + 50 * Math.sin(t * .07); cam.tilt = -.12 + .06 * Math.sin(t * .05);
+  const fp = cellWorld(G.foci[0]); cam.tx += (fp.x - cam.tx) * dt * .5; cam.tz += (fp.z - cam.tz) * dt * .5;
+}
+// en la portada, el incendio se desplaza a la derecha para que la tarjeta no lo tape
+function menuView() { const on = document.body.classList.contains('menu') && innerWidth >= 1000; if (on) camera.setViewOffset(innerWidth, innerHeight, -innerWidth * .2, 0, innerWidth, innerHeight); else camera.clearViewOffset(); }
+function showMenu(on) { document.body.classList.toggle('menu', on); menuView(); }
+addEventListener('resize', menuView);
+for (const id of ['bStart', 'bTut']) { const b = $(id), f = b.onclick; b.onclick = () => { showMenu(false); S.init(); f(); }; }
 { const li = lvlIdx; lvlIdx = 0; newGame(12345); G.demo = true; lvlIdx = li; } G.speed = 0; setSpeed(0);
+WX.time = 18.4 * 60; // la portada, al atardecer
+G.L = { ...G.L, k: 2.2 }; // en la portada el fuego corre más
+for (let k = 0; k < 900; k++) fireStep(STEP); // y arranca ya extendido
+showMenu(true);
 $('loading').remove();
 requestAnimationFrame(frame);
 // Acceso de depuración (pruebas)
 window.RT = {
   get G() { return G; }, ignite, cam, flames, smoke, water, WX, burning: () => burning, order, taskAttack, activateAlarm,
-  get prof() { return prof; }, saveProf, hAt, get H() { return H; }, get AMP() { return AMP; }, scene, renderer, sun, sky, get world() { return world; }, get trees() { return trees; }, get terrain() { return terrain; }, bloom, airOrder, startCut, line4, cutPower, newGame, clickAt, get STATE() { return STATE; }, get VEG() { return VEG; }, get WET() { return WET; }, sunElev,
+  get prof() { return prof; }, saveProf, hAt, TUNE, LEVELS, get H() { return H; }, get AMP() { return AMP; }, scene, renderer, sun, sky, get world() { return world; }, get trees() { return trees; }, get terrain() { return terrain; }, bloom, airOrder, startCut, line4, cutPower, newGame, clickAt, get STATE() { return STATE; }, get VEG() { return VEG; }, get WET() { return WET; }, sunElev,
   sim(sec) { const t0 = performance.now(); for (let k = 0; k < sec / STEP && !G.over; k++) simStep(STEP); updateVisuals(.05, .05); updateCamera(1); updateLabels(); updateHUD(); drawMinimap(); render(); return Math.round(performance.now() - t0) + ' ms'; },
-  frame() { updateCamera(1); updateVisuals(.05, .05); updateLabels(); updateHUD(); layoutTop(); drawMinimap(); render(); }
+  frame() { updateCamera(1); updateVisuals(.05, .05); updateLabels(); updateHUD(); layoutTop(); drawMinimap(); updateArrows(); render(); }
 };

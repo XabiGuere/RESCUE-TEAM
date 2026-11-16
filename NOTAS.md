@@ -1,6 +1,6 @@
-# Rescue Team — notas del proyecto
+# Línea de Fuego — notas del proyecto
 
-Nombre provisional: **Rescue Team**. El nombre definitivo se decide al final (fase 4).
+Nombre definitivo: **Línea de Fuego**. El nombre provisional era «Rescue Team», y así se sigue llamando el repositorio de GitHub (RESCUE-TEAM).
 Juego 3D de extinción de incendios forestales en el navegador, hecho con Three.js 0.160.0 (se carga desde cdn.jsdelivr). Todo el texto del juego y las respuestas al usuario van **en castellano**.
 
 ## Cómo trabajar con el usuario
@@ -9,7 +9,12 @@ Juego 3D de extinción de incendios forestales en el navegador, hecho con Three.
 
 ## Archivos
 - `index.html`: interfaz, CSS, superposiciones (portada, pantalla final, hangar) e importmap de three.
-- `juego.js` (~1400 líneas): todo el juego.
+- `juego.js` (~2100 líneas): todo el juego.
+- `sonido.js`: sonido sintetizado con Web Audio, sin archivos de audio.
+  - Ambiente: `ambient()` (viento, rugido y crepitar del fuego, lluvia, grillos).
+  - Voces de los medios: `voice()`.
+  - Efectos: `ui()`, `thunder()`, `splash()`.
+  - juego.js decide el volumen en `soundFrame()`: un medio solo suena si está en pantalla o a punto de entrar (`screenVis`). El volumen sube según se acerca al borde y el sonido se reparte entre los altavoces según su posición.
 - No funciona abriendo el archivo con doble clic, porque los módulos ES necesitan servidor. Hay que servir la carpeta con cualquier servidor estático. Por ejemplo:
   ```
   npx serve incendios
@@ -61,9 +66,22 @@ Juego 3D de extinción de incendios forestales en el navegador, hecho con Three.
 1. ✅ Mundo, fuego, clima, autobombas y cámara.
 2. ✅ Pueblos y evacuación, casas aisladas, granjas y ganado, fauna salvaje, noche y lluvia.
 3. ✅ Hangar con XP, niveles bloqueados, helicóptero, hidroavión, brigada, bulldozer, cortafuegos y tendido eléctrico.
-4. ⏳ Pendiente: sonido, pulido visual y nombre definitivo.
+4. ✅ Sonido (ambiente, medios con volumen según la cercanía a la pantalla, avisos), nombre «Línea de Fuego», portada cinemática (`demoStep`: el incendio de fondo arde y la cámara lo rodea), récords por nivel (`prof.rec`) y flechas de aviso en el borde de la pantalla (`updateArrows`, con focos nuevos en `G.alerts`). Sin música, por decisión del usuario.
+
+Ideas que el usuario ha mencionado y no están hechas: ambulancias y policía como medios nuevos.
+
+## Equilibrio (16/11/2026)
+Calibrado con partidas automáticas: un bot que ataca el fuego más cercano a los pueblos, activa alarmas y saca casas y ganado.
+- **`TUNE`:** K .1, W .11, spot .6. Valores `k` por nivel: .95 / .95 / .78 / .75 / .62.
+- **Ventaja inicial del fuego:** cuando llega el aviso, el fuego ya lleva 8 + 4×nivel s ardiendo.
+- **Medios aéreos:** tardan en despegar (helicóptero 18 s, hidroavión 30 s). Una orden dada antes se guarda.
+- **Pueblos y casas:** en niveles altos los focos nacen más lejos de ellos. El aviso a los pueblos llega a 28 celdas y la evacuación tarda 2–12 s.
+- **Mangueras:** mojan 3×3 celdas.
+- **Resultados del bot:**
+  - Equipo inicial: niveles 1 y 2 4/4; nivel 3 1/4.
+  - Equipo medio: niveles 3 y 4 2/4 y 1/4.
+  - Equipo completo: niveles 3 y 4 4/4; nivel 5 2/4.
+  - Un jugador humano debería hacerlo mejor que el bot.
 
 ## Pendiente o por revisar
-- **Equilibrio:** desde el nivel 3 el fuego puede crecer muchísimo con algunas semillas (hasta unas 77 ha en 30 s). Falta ajustarlo según lo que diga el usuario al jugar.
-- El hidroavión apaga casi al instante el foco inicial pequeño. No se ha cambiado porque solo se puede comprar a partir del nivel 3.
 - No se ha medido el rendimiento (FPS) en otros equipos.

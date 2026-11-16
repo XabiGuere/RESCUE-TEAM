@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Rescue Team</title>
+<title>Línea de Fuego</title>
 <style>
 :root{--glass:rgba(12,15,22,.78);--line:rgba(255,255,255,.1);--text:#eef1f6;--muted:#9aa3b5;--fire:#ff6a2a;--ok:#4fd18b;--warn:#ffc04d;--bad:#ff4d5e;--water:#4db8ff}
 *{box-sizing:border-box}
@@ -81,6 +81,29 @@ button.on{background:var(--fire);border-color:var(--fire);color:#160800;font-wei
 .item button[disabled]{opacity:.5;cursor:default}
 .item.locked{opacity:.55}
 .xpTot{font-weight:800;color:var(--warn)}
+/* portada cinemática: el incendio se ve detrás, la tarjeta a un lado */
+#ovStart{background:linear-gradient(90deg,rgba(5,6,10,.82) 0%,rgba(5,6,10,.45) 48%,rgba(5,6,10,0) 75%);backdrop-filter:none}
+#ovStart .card{background:rgba(12,15,22,.62)}
+@media (min-width:1000px){#ovStart{justify-content:flex-start;padding-left:5vw}#ovStart .card{max-width:600px}}
+body.menu #top,body.menu #units,body.menu #mm,body.menu #log,body.menu #labels,body.menu #panel,body.menu #hover,body.menu #arrows{display:none!important}
+.kicker{font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:var(--warn);margin-bottom:4px}
+#logo{font-size:46px;line-height:1.05}
+#logo{background:none;-webkit-background-clip:border-box;background-clip:border-box;color:#ff7a2a}
+#logo span{display:inline-block;color:#ff7a2a;text-shadow:0 0 18px rgba(255,90,30,.35);animation:rise .9s cubic-bezier(.2,.8,.2,1) both,ember 3.2s ease-in-out 1s infinite}
+#logo span:first-child{color:#ffc35a}
+#logo span:nth-child(2){animation-delay:.15s,1.3s}#logo span:nth-child(3){animation-delay:.3s,1.6s}
+@keyframes rise{from{opacity:0;transform:translateY(18px)}}
+@keyframes ember{50%{text-shadow:0 0 26px rgba(255,106,42,.9),0 0 4px rgba(255,200,120,.6)}}
+@media (prefers-reduced-motion:reduce){#logo span{animation:none}}
+.lvls button .rec{display:block;margin-top:4px;font-size:9.5px;color:var(--warn)}
+.lvls button.on .rec{color:#3a1500}
+/* flechas de aviso en el borde de la pantalla */
+#arrows{position:fixed;inset:0;pointer-events:none;z-index:4}
+.arw{position:absolute;display:flex;align-items:center;gap:5px;padding:4px 8px;border-radius:999px;background:rgba(10,12,18,.82);border:1px solid var(--warn);font-size:11px;white-space:nowrap;pointer-events:auto;cursor:pointer;transform:translate(-50%,-50%)}
+.arw.bad{border-color:var(--bad);animation:blink 1s infinite}
+.arw i{display:inline-flex;width:20px;height:20px;align-items:center;justify-content:center;border-radius:50%;background:var(--warn);color:#160800;font-style:normal;font-weight:900;font-size:12px}
+.arw.bad i{background:var(--bad);color:#fff}
+@media (max-width:640px){.arw{font-size:10px;padding:3px 6px 3px 3px}.arw span{display:none}}
 #coach{position:fixed;left:50%;top:96px;transform:translateX(-50%);width:min(460px,calc(100vw - 20px));padding:12px 16px;display:none;z-index:6;border-color:rgba(255,192,77,.5)}
 #coach.show{display:block;animation:in .3s ease}
 #coach.ok{border-color:var(--ok);box-shadow:0 0 0 2px var(--ok)}
@@ -132,16 +155,17 @@ html.touch #hover{display:none}
 <body>
 <canvas id="c"></canvas>
 <div id="labels"></div>
+<div id="arrows"></div>
 
 <div id="top">
-  <div class="glass blk"><div><div id="title">RESCUE TEAM</div><div class="lab" id="lvlLab">Nivel 1</div></div></div>
+  <div class="glass blk"><div><div id="title">LÍNEA DE FUEGO</div><div class="lab" id="lvlLab">Nivel 1</div></div></div>
   <div class="glass blk"><span id="sunIc" style="font-size:22px">☀️</span><div><div class="big" id="clock">14:00</div><div class="lab" id="dayLab">Tarde</div></div></div>
   <div class="glass blk"><span id="wxIc" style="font-size:22px">☀️</span><div><div class="big" id="temp">30 °C</div><div class="lab" id="hum">Humedad 20%</div></div></div>
   <div class="glass blk">
     <svg id="compass" viewBox="-50 -50 100 100"><circle r="46" fill="rgba(255,255,255,.05)" stroke="rgba(255,255,255,.2)"/><text id="cN" x="0" y="-32" fill="#ff7b7b" font-size="15" font-weight="700" text-anchor="middle" dominant-baseline="middle">N</text><g id="wArrow"><path d="M0 -34 L11 -8 L4 -8 L4 30 L-4 30 L-4 -8 L-11 -8 Z" fill="#7cc8ff"/></g></svg>
     <div><div class="big" id="wind">20 km/h</div><div class="lab" id="windDir">Viento del O</div></div>
   </div>
-  <div class="glass blk" id="speed"><button data-s="0" title="Pausa (espacio)">⏸</button><button data-s="1" class="on">▶</button><button data-s="2">x2</button><button data-s="4">x4</button><button id="bHQ" class="on">HD</button></div>
+  <div class="glass blk" id="speed"><button data-s="0" title="Pausa (espacio)">⏸</button><button data-s="1" class="on">▶</button><button data-s="2">x2</button><button data-s="4">x4</button><button id="bHQ" class="on">HD</button><button id="bSnd" title="Sonido">🔊</button></div>
   <div class="glass blk" id="stats">
     <div class="st"><span class="lab">Ardiendo</span><span class="big" id="sFire">0 ha</span></div>
     <div class="st"><span class="lab">Quemado</span><span class="big" id="sBurn">0 ha</span></div>
@@ -158,7 +182,8 @@ html.touch #hover{display:none}
 <div id="mm" class="glass"><canvas id="mmc" width="190" height="190"></canvas></div>
 
 <div class="ov show" id="ovStart"><div class="card glass">
-  <h1>RESCUE TEAM</h1>
+  <div class="kicker">Mando de extinción de incendios forestales</div>
+  <h1 id="logo"><span>LÍNEA</span> <span>DE</span> <span>FUEGO</span></h1>
   <p>Un incendio forestal acaba de empezar. Coordina a los bomberos, evacúa los pueblos, saca al ganado y no dejes que nadie muera. El fuego avanza según la vegetación, la pendiente, la humedad y un viento que puede cambiar en cualquier momento.</p>
   <div class="lvls" id="lvls"></div>
   <div class="help onlyTouch">
