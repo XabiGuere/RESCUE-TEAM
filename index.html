@@ -61,12 +61,30 @@ button.on{background:var(--fire);border-color:var(--fire);color:#160800;font-wei
 .card h1{margin:0;font-size:40px;letter-spacing:.12em;font-weight:900;background:linear-gradient(90deg,#ffd36b,#ff6a2a,#ff3b3b);-webkit-background-clip:text;background-clip:text;color:transparent}
 .card h2{margin:0 0 8px}
 .card p{color:#c9cfdb;line-height:1.5}
-.lvls{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:14px 0}
-.lvls button{padding:10px 6px;text-align:center;line-height:1.3}
-.lvls button b{display:block;font-size:20px}
-.lvls button small{color:var(--muted);font-size:10px}
+.lvls{margin:14px 0}
+.lvls button{text-align:center;line-height:1.25}
+.lvls button small{display:block;color:var(--muted);font-size:10px}
 .lvls button.on small{color:#3a1500}
-.lvls button[disabled]{opacity:.4;cursor:default}
+.lvls button[disabled]{opacity:.35;cursor:default}
+.modes{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px}
+.modes button{padding:9px 6px;font-weight:700}
+.pages{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-bottom:8px}
+.pages button{padding:5px 2px;font-size:12px;font-weight:700}
+.ltiles{display:grid;grid-template-columns:repeat(10,1fr);gap:5px}
+.ltiles .lt{padding:5px 0 3px;min-width:0;border-bottom-width:3px}
+.ltiles .lt b{display:block;font-size:15px}
+.ltiles .lt small{color:var(--warn);font-size:9px;letter-spacing:-.05em;min-height:11px}
+.ltiles .lt.noche{border-bottom-color:#5b6bd6}.ltiles .lt.tormenta{border-bottom-color:#a77bff}.ltiles .lt.calor{border-bottom-color:#ff6a2a}
+.ltiles .lt.viento,.ltiles .lt.rolada{border-bottom-color:#7fc6e6}.ltiles .lt.lluvia{border-bottom-color:#3fa3ff}.ltiles .lt.focos{border-bottom-color:#ff3b3b}
+.ldet{margin-top:10px;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.04);font-size:13px;line-height:1.45}
+.ldet small{color:var(--muted)}
+.ldet .rec{display:block;margin-top:3px;font-size:11px;color:var(--warn)}
+.stars{color:#ffc04d;letter-spacing:.1em;font-size:15px}.stars span{color:rgba(255,255,255,.18)}
+#endP .stars{display:block;font-size:34px;margin-bottom:4px}
+.medals{margin-top:8px;font-size:18px}.medals small{font-size:11px;color:var(--muted);margin-left:4px}
+.fdiff{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.fdiff button{padding:10px 4px}.fdiff b{display:block;font-size:15px}
+.fnote{font-size:12px;margin:8px 0 0}
 .mode{color:var(--warn);font-weight:700}
 #ovShop{z-index:25}
 .card.wide{max-width:960px}
@@ -95,8 +113,6 @@ body.menu #top,body.menu #units,body.menu #mm,body.menu #log,body.menu #labels,b
 @keyframes rise{from{opacity:0;transform:translateY(18px)}}
 @keyframes ember{50%{text-shadow:0 0 26px rgba(255,106,42,.9),0 0 4px rgba(255,200,120,.6)}}
 @media (prefers-reduced-motion:reduce){#logo span{animation:none}}
-.lvls button .rec{display:block;margin-top:4px;font-size:9.5px;color:var(--warn)}
-.lvls button.on .rec{color:#3a1500}
 /* flechas de aviso en el borde de la pantalla */
 #arrows{position:fixed;inset:0;pointer-events:none;z-index:4}
 .arw{position:absolute;display:flex;align-items:center;gap:5px;padding:4px 8px;border-radius:999px;background:rgba(10,12,18,.82);border:1px solid var(--warn);font-size:11px;white-space:nowrap;pointer-events:auto;cursor:pointer;transform:translate(-50%,-50%)}
@@ -145,7 +161,9 @@ html.touch #hover{display:none}
   #panel p{font-size:12px}#panel .row button{padding:7px 10px}
   #coach{width:calc(100vw - 12px)}#coach p{font-size:12.5px}
   .card{padding:16px}.card h1{font-size:28px}
-  .lvls{grid-template-columns:repeat(3,1fr)}
+  .ltiles{grid-template-columns:repeat(5,1fr)}
+  .fdiff{grid-template-columns:repeat(2,1fr)}
+  .pages small{display:none!important}
   .help{grid-template-columns:1fr}
   .lbl{font-size:10px;padding:1px 5px}
 }
@@ -194,6 +212,7 @@ html.touch #hover{display:none}
     <div><b>Deslizar dos dedos</b> arriba o abajo → inclinar la vista</div>
     <div><b>Tocar un pueblo</b> → alarma de evacuación · <b>una granja</b> → camión de ganado</div>
     <div><b>✕</b> en un panel → cerrarlo · <b>⏸</b> → pausa</div>
+    <div><b>Autobús / ambulancia</b> + tocar un pueblo → recoger a quien no puede irse · <b>policía</b> + tocar una carretera → cortarla</div>
   </div>
   <div class="help onlyMouse">
     <div><b>Clic</b> en una autobomba → seleccionarla</div>
@@ -208,8 +227,10 @@ html.touch #hover{display:none}
     <div><b>Helicóptero / hidroavión</b> → clic en el fuego: hacen rotaciones solos</div>
     <div><b>Clic en una línea eléctrica</b> → pedir el corte de tensión</div>
     <div><b>Clic derecho</b> con un cortafuegos a medias → cancelar</div>
+    <div><b>Autobús / ambulancia</b> → clic en un pueblo: recoger a quien no puede irse solo</div>
+    <div><b>Policía</b> → clic en una carretera: cortarla para que no pasen los evacuados</div>
   </div>
-  <p style="font-size:12px">Pierdes si muere algún civil o bombero, o si los daños superan el límite del nivel. Ganas cuando el fuego queda totalmente extinguido. Cada victoria da XP para comprar medios y mejoras en el hangar, y desbloquea el nivel siguiente.</p>
+  <p style="font-size:12px">Pierdes si muere algún civil o bombero, o si los daños superan el límite del nivel. Ganas cuando el fuego queda totalmente extinguido. Cada victoria da XP para comprar medios y mejoras en el hangar, y desbloquea el nivel siguiente. Cada nivel de la campaña tiene siempre el mismo mapa y el mismo tiempo: consigue las 3 estrellas y una medalla cada 10 niveles.</p>
   <div style="display:flex;gap:10px;justify-content:center;align-items:center;margin-top:10px;flex-wrap:wrap"><button id="bShop">🛒 Hangar y mejoras · <span class="xpTot" id="xpTot">0 XP</span></button><button id="bTut">🎓 Tutorial</button><button class="go" id="bStart">Empezar</button></div>
 </div></div>
 
@@ -226,6 +247,7 @@ html.touch #hover{display:none}
   <p style="margin:6px 0 0;font-size:12px">Lo que compres se queda para todas las partidas. Algunos medios se desbloquean al llegar a niveles superiores.</p>
   <h4>Medios</h4><div class="shop" id="shopUnits"></div>
   <h4>Mejoras</h4><div class="shop" id="shopUpg"></div>
+  <h4>Servicios de emergencia · se incorporan solos al llegar al nivel indicado</h4><div class="shop" id="shopSvc"></div>
   <div style="display:flex;justify-content:space-between;margin-top:16px"><button id="bReset" style="font-size:11px;color:var(--muted)">Reiniciar progreso</button><button class="go" id="bShopClose">Volver</button></div>
 </div></div>
 

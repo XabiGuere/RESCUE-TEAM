@@ -86,7 +86,77 @@ Juego 3D de extinción de incendios forestales en el navegador, hecho con Three.
   - Las descargas aéreas sobre zonas sin fuego también sirven de barrera húmeda.
   - Con el bot siguen ganándose los niveles 1–2 con el equipo inicial y el nivel 3 con equipo medio.
 
-Ideas que el usuario ha mencionado y no están hechas: ambulancias y policía como medios nuevos.
+### Arreglos del 17/11/2026
+- **Móvil:** el giro con dos dedos iba al revés; ahora el mapa gira con los dedos (`cam.yaw += da`). El alejamiento máximo depende de la forma de la pantalla (`maxDist()`: 900, y hasta ×2,4 en vertical), y la niebla se aparta al alejarse.
+- **Reloj:** antes 1 s = 2 min, y anochecía a los 3 minutos incluso en el nivel 1, con los aviones en tierra casi toda la partida. Ahora 1 s = 30 s (`TIME_K = .5`).
+  - Horas de inicio: 11, 16, 10, 12 y 10 h. Solo el nivel 2 anochece a propósito.
+  - NVG se desbloquea en el nivel 2 y cuesta 1200.
+  - Los récords antiguos se pasan a la nueva escala (`prof.recV`).
+- **Fuego más lento:**
+  - `TUNE.K` vale .085. Valores `k`: .9 / .9 / .72 / .6 / .46.
+  - Las pavesas también se multiplican por `k`.
+  - Viento de los niveles 4 y 5: 33 y 40.
+  - Ventaja inicial del fuego: 8 + 3×nivel s.
+  - Sin intervenir, en el nivel 5 quema la mitad que antes en los dos primeros minutos.
+- En el nivel 1 la lluvia apaga a veces el fuego sola, y eso ya pasaba antes.
+
+### 100 niveles, partida libre y recompensas (17/11/2026)
+El usuario quería que cada mapa de un nivel tuviera siempre las mismas condiciones. Con mapas al azar, unos eran imposibles y otros se apagaban solos.
+- **Campaña de 100 niveles:**
+  - `makeLevel(n, tema, p, semilla)`: la dificultad `p` va de 0 a 1.
+  - Focos: 1 hasta el nivel 12, 2 hasta el 40, 3 hasta el 75 y 4 después.
+  - Viento de 12 a 44 km/h (tope 44). Sequía de .42 a .87; `k` de .9 a .4.
+  - Autobombas: 2, luego 3 y luego 4.
+- **Temas** (`THEMES`):
+  - Ventarrón, Ola de calor, Viento loco (roladas), Frente de lluvia (llueve a los 300 s; si no, nunca llueve en la campaña), Frentes múltiples, Tormenta seca.
+  - Anochecer: niveles 5, 15, 25…
+- **Mapa fijo:** cada nivel usa su semilla `LSEED`.
+  - Las semillas se eligieron con `RT.probe`: de 8 candidatos, el más cercano a la curva objetivo de celdas quemadas sin intervenir a los 180 s (`120 + 900·p^1.1`), descartando los que se apagan solos.
+- **Tiempo fijo:** usa su propio generador (`RW`, sembrado con la semilla del nivel), así que no depende de lo que haga el jugador.
+- **Partida libre** (`makeFree`, `FREE_DIFF`):
+  - Cuatro dificultades, con mapa y tiempo al azar.
+  - Da el 60 % de la XP y no cuenta para récords ni desbloqueos.
+- **Recompensas:**
+  - Estrellas: 1 por ganar, 2 con daños por debajo del 50 % del límite, 3 por debajo del 25 % y sin casas perdidas. Cada estrella nueva da XP extra.
+  - Medalla cada 10 niveles (`MEDALS`, `prof.medals`), con 800 × n XP.
+  - XP por victoria: `300 + 40·n + …`.
+- **Hangar nuevo:**
+  - Autobomba pesada (`pesada`, nivel 22): 2,5× agua, chorro ×1,3 y velocidad ×0,8.
+  - Helicóptero pesado (`kamov`, nivel 35): descarga ×1,8 en un radio mayor.
+  - Torres de vigilancia (`vigia`): −35 % de ventaja inicial del fuego.
+  - Red de comunicaciones (`radio`): los aviones despegan en la mitad de tiempo.
+  - Segundo hidroavión, tercer helicóptero, 2 brigadas, 2 bulldozers y más niveles de mejoras.
+  - Las variantes pesadas son `heavy(u)`: mismo tipo con `u.heavy`, `u.spk` y `u.dropK`.
+- **Carreteras visibles:**
+  - Textura propia `roadTex`, 8 veces más fina que la rejilla. Canal R = asfalto, G = pista, B = arcén.
+  - La dibuja un canvas en `buildScene` y la mezcla `TERRAIN_COLOR`.
+- **Pistas forestales:** 3 por mapa (`ROADF = 2`), de tierra clara.
+  - Los camiones las usan un poco más despacio que la carretera.
+  - En el minimapa se ven ocres.
+- Los récords antiguos se borraron (`recV = 3`) porque eran de otros mapas.
+
+### Servicios de emergencia (17/11/2026)
+No se compran: se incorporan solos según el nivel (`SERVICES`, `svcCount`). También aparecen en el hangar y en la ficha del nivel.
+- **Gente que no puede irse sola** (`h.dep`, desde el nivel 6):
+  - Al sonar la alarma, cada coche se lleva `people − dep`; los demás se quedan esperando en casa.
+  - Si arde la casa con ellos dentro, se pierde la partida.
+  - `townWaiting(t)` y `townLeft(t)` cuentan cuánta gente queda.
+- **Autobús** (niveles 6 y 40), tarea `evac`:
+  - Recoge 40 personas a 3 por segundo (`takePerson`), los recogidos ya cuentan como evacuados y los lleva a la base (`taskBase`).
+  - En casas aisladas, encadena las cercanas.
+- **Ambulancia** (niveles 3 y 30):
+  - Evacúa casas aisladas en 1,5 s y recoge 4 personas en un pueblo.
+  - Tarea `heal`: +10 de salud por segundo. Si está libre, atiende sola a dotaciones por debajo de 65.
+- **Patrulla de policía** (niveles 8 y 25):
+  - Tarea `block` en una carretera: `updateBlocks` corta 3×3 celdas y `carCost` las trata como intransitables. Los coches se desvían con `carRoute`.
+  - Parada junto a un pueblo con alarma, adelanta la salida de los vecinos.
+- **Helicóptero de rescate** (`hres`, nivel 12):
+  - Funciona en `airStep` y `hresStep`, con las tareas `hlift`, `hback`, `hheal` y `hmove`.
+  - Iza una persona cada 2 s, con 8 plazas, y hace viajes de ida y vuelta solo. No vuela de noche sin NVG.
+- **Capacidades** (`CAP`): las autobombas siguen pudiendo evacuar (5 plazas).
+- **Botones nuevos:** «Enviar a recoger» en el pueblo, «Vehículo más adecuado» en las casas (`bestRescuer`), «Pedir atención sanitaria» en las unidades y «Levantar el corte» en la patrulla.
+- **Etiquetas:** con un medio seleccionado, tocar la etiqueta de un pueblo, casa o granja da la orden.
+- **Sirenas:** la ambulancia tiene un bitonal agudo y la policía un aullido (`sonido.js`).
 
 ## Equilibrio (16/11/2026)
 Calibrado con partidas automáticas: un bot que ataca el fuego más cercano a los pueblos, activa alarmas y saca casas y ganado.

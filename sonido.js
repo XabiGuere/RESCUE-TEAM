@@ -93,10 +93,10 @@ function makeVoice(kind) {
     // vehículo de tierra: motor + rodadura
     v.o1 = keep(osc('sawtooth', kind === 'bulldozer' ? 38 : 55)); v.g.eng = gainN(0); chain(v.o1, filt('lowpass', kind === 'bulldozer' ? 260 : 340), v.g.eng, out);
     v.g.road = gainN(0); chain(keep(loop(brown)), filt('lowpass', 500), v.g.road, out);
-    if (kind === 'bomba') {
-      v.o2 = keep(osc('triangle', 435)); v.g.siren = gainN(0); chain(v.o2, filt('lowpass', 2200), v.g.siren, out);
-      v.g.spray = gainN(0); chain(keep(loop(white)), filt('bandpass', 1100, .7), v.g.spray, out);
+    if (kind === 'bomba' || kind === 'ambu' || kind === 'poli') {
+      v.o2 = keep(osc(kind === 'poli' ? 'sawtooth' : 'triangle', 435)); v.g.siren = gainN(0); chain(v.o2, filt('lowpass', kind === 'poli' ? 1600 : 2200), v.g.siren, out);
     }
+    if (kind === 'bomba') { v.g.spray = gainN(0); chain(keep(loop(white)), filt('bandpass', 1100, .7), v.g.spray, out); }
     if (kind === 'bulldozer' || kind === 'brigada') { v.g.work = gainN(0); chain(keep(loop(white)), filt('bandpass', kind === 'brigada' ? 2600 : 700, 2), v.g.work, out); }
   }
   return v;
@@ -114,7 +114,11 @@ export function voice(id, kind, p) {
   else {
     to(v.g.eng.gain, p.move ? .1 : .025, .3); v.o1.frequency.setTargetAtTime((v.kind === 'bulldozer' ? 38 : 55) * (p.move ? 1.35 : 1), t, .4);
     to(v.g.road.gain, p.move ? .12 : 0, .3);
-    if (v.g.siren) { v.o2.frequency.setValueAtTime(Math.floor(t * 1.4) % 2 ? 435 : 580, t); to(v.g.siren.gain, p.siren ? .045 : 0, .1); }
+    if (v.g.siren) {
+      // bomberos: bitonal lento · ambulancia: bitonal agudo y rápido · policía: aullido que sube y baja
+      const f = kind === 'ambu' ? (Math.floor(t * 2.4) % 2 ? 700 : 950) : kind === 'poli' ? 650 + 650 * (.5 - .5 * Math.cos(t * Math.PI * 1.3)) : (Math.floor(t * 1.4) % 2 ? 435 : 580);
+      v.o2.frequency.setTargetAtTime(f, t, kind === 'poli' ? .03 : .005); to(v.g.siren.gain, p.siren ? (kind === 'poli' ? .03 : .04) : 0, .1);
+    }
     if (v.g.spray) to(v.g.spray.gain, p.spray ? .16 : 0, .15);
     if (v.g.work) to(v.g.work.gain, p.work ? .07 : 0, .2);
   }
