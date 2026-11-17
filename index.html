@@ -4,6 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Línea de Fuego</title>
+<!-- app instalable (PWA): icono, pantalla completa y juego sin conexión -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0a0c10">
+<meta name="description" content="Juego de mando en la extinción de incendios forestales.">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Línea de Fuego">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="favicon.png">
 <style>
 :root{--glass:rgba(12,15,22,.78);--line:rgba(255,255,255,.1);--text:#eef1f6;--muted:#9aa3b5;--fire:#ff6a2a;--ok:#4fd18b;--warn:#ffc04d;--bad:#ff4d5e;--water:#4db8ff}
 *{box-sizing:border-box}
@@ -253,5 +263,6 @@ html.touch #hover{display:none}
 
 <div id="loading">Cargando motor 3D…</div>
 <script type="module" src="juego.js"></script>
+<script>if ('serviceWorker' in navigator && isSecureContext) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => { }));</script>
 </body>
 </html>
