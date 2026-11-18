@@ -9,7 +9,8 @@ Juego 3D de extinción de incendios forestales en el navegador, hecho con Three.
   - Para actualizarla, el usuario arrastra los archivos cambiados a la página de subida de GitHub. La web se actualiza sola en uno o dos minutos.
 - **App instalable (PWA):** `manifest.webmanifest`, los iconos `icono-192.png`, `icono-512.png`, `apple-touch-icon.png` y `favicon.png`, y `sw.js`.
   - `sw.js` guarda el juego y Three.js para jugar sin conexión. Los archivos del juego van primero por red; Three.js se sirve primero desde la copia guardada.
-  - Si se añade un archivo nuevo al juego, hay que incluirlo en `CORE` de `sw.js`. Para forzar que se borre todo lo guardado, se sube la versión de `CACHE`.
+  - Si se añade un archivo nuevo al juego, hay que incluirlo en `CORE` de `sw.js`. Para forzar que se borre todo lo guardado, se sube la versión de `CACHE` (ahora `ldf-v2`).
+  - GitHub Pages manda guardar los archivos 10 minutos (`max-age=600`). Desde el 18/11/2026, `sw.js` pide los archivos del juego con `cache: 'no-cache'`: siempre pregunta al servidor y las actualizaciones se ven al momento. A las navegaciones se les pasa `req.url`, porque una petición de navegación no se puede copiar con opciones.
   - Los iconos se generan con un script de PowerShell (System.Drawing): una llama sobre montes oscuros.
 - Antes también se publicaba como artefacto de Claude. El progreso (XP) se guarda por separado en cada dirección.
 
