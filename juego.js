@@ -131,12 +131,15 @@ let prof = (() => {
 })();
 const saveProf = () => { try { localStorage.setItem('rt-prof', JSON.stringify(prof)); } catch (e) { } };
 const own = id => prof.own[id] || 0;
-const ICON = { bomba: '🚒', cisterna: '🛢️', ganado: '🚛', brigada: '🪓', bulldozer: '🚜', heli: '🚁', avion: '🛩️', bus: '🚌', ambu: '🚑', poli: '🚓', hres: '⛑️' };
+const ICON = { bomba: '🚒', cisterna: '🛢️', ganado: '🚛', brigada: '🪓', bulldozer: '🚜', heli: '🚁', avion: '🛩️', bus: '🚌', ambu: '🚑', poli: '🚓', hres: '⛑️', elec: '👷' };
+// vehículos con sirena: el tráfico se aparta a su paso. El resto (autobús, camión de ganado, ingenieros) se come los atascos salvo que lo escolte la policía
+const SIREN = new Set(['bomba', 'cisterna', 'ambu', 'poli', 'brigada', 'bulldozer']);
 // servicios de emergencia: no se compran, se incorporan solos al llegar a cierto nivel (uno más en cada nivel de la lista)
 const SERVICES = [
   { id: 'ambu', ic: '🚑', n: 'Ambulancia', d: 'Rápida: saca a la gente de las casas aisladas en la mitad de tiempo y atiende a las dotaciones heridas para que recuperen salud sin retirarse.', lv: [3, 30] },
   { id: 'bus', ic: '🚌', n: 'Autobús de evacuación', d: 'Recoge hasta 40 personas que no pueden irse solas de los pueblos (mayores, gente sin coche) y las lleva a la base.', lv: [6, 40] },
-  { id: 'poli', ic: '🚓', n: 'Patrulla de policía', d: 'Corta carreteras para que los coches de evacuados no entren en zona de fuego y dirige la evacuación de los pueblos para que salgan antes.', lv: [8, 25] },
+  { id: 'elec', ic: '👷', n: 'Ingenieros de la compañía eléctrica', d: 'Aíslan solo el tramo de línea que les digas, sin dejar a los pueblos sin luz y por mucho menos dinero que el corte general. También reparan las líneas que ha derribado el fuego. No pueden trabajar con las llamas encima.', lv: [4, 45] },
+  { id: 'poli', ic: '🚓', n: 'Patrulla de policía', d: 'Corta carreteras, escolta al autobús y al camión de ganado entre el tráfico, desaloja a los curiosos y atiende accidentes. Junto a un pueblo con alarma, los vecinos salen antes.', lv: [8, 25] },
   { id: 'hres', ic: '⛑️', n: 'Helicóptero de rescate', d: 'Con grúa: iza a la gente de casas aisladas por el fuego aunque la carretera esté cortada (8 por viaje) y atiende a dotaciones atrapadas.', lv: [12] },
 ];
 const svcCount = (id, n) => SERVICES.find(s => s.id === id).lv.filter(l => n >= l).length;
@@ -225,6 +228,7 @@ const costFor = u => u.type === 'brigada' ? footCost : vehCost;
 function carCost(a, b, d) {
   if (!passable(a, b, d)) return Infinity;
   if (G && G.blocks && G.blocks[b]) return Infinity; // controles de la policía
+  if (G && G.accMask && G.accMask[b]) return Infinity; // accidentes
   const v = VEG[b]; const base = ROADF[b] ? 1 : v === V.TOWN ? 2 : (v === V.GRASS || v === V.CROP) ? 8 : 25;
   return base * DL8[d];
 }
@@ -914,6 +918,11 @@ function makeVehicle(type) {
     box(2.52, .4, 5.7, M(0xf3c316), 0, 1.6, -.1); box(.1, .9, .3, M(0xd81b34), 1.27, 2.7, -1); box(.1, .3, .9, M(0xd81b34), 1.27, 2.7, -1);
   } else if (type === 'poli') {
     box(2.2, 1, 4.6, M(0xf2f2f2), 0, 1.15, 0); box(2, .8, 2.3, glass, 0, 2, -.2); box(2.22, .3, 4.62, M(0x1d3f8f), 0, 1.25, 0);
+  } else if (type === 'elec') { // furgoneta de la compañía eléctrica con escalera y cesta en el techo
+    box(2.3, 2.2, 3.4, M(0xf2f2f2), 0, 1.9, -.9); box(2.3, 1.6, 1.6, M(0xf2f2f2), 0, 1.6, 1.6); box(2, .6, 1.1, glass, 0, 2.1, 2.1);
+    box(2.32, .3, 5, M(0xf08a1c), 0, 1.4, -.1);
+    box(.25, .2, 4.2, M(0x9aa0a6), -.6, 3.15, -.8); box(.25, .2, 4.2, M(0x9aa0a6), .6, 3.15, -.8); for (const z of [-2.4, -1.4, -.4, .6]) box(1.2, .12, .15, M(0x9aa0a6), 0, 3.15, z);
+    box(1, .7, .9, M(0xf3c316), 0, 3.5, -2.6);
   } else {
     box(2.6, 2.6, 5, M(0x2f6d3a), 0, 2.2, -.8); box(2.6, 1.9, 2, M(0xe8e8e8), 0, 1.75, 2.6); box(2.2, .6, 1.4, glass, 0, 2.3, 3.2);
   }
@@ -921,7 +930,7 @@ function makeVehicle(type) {
     const wm = M(0x111111), wz = type === 'bus' ? [-3.4, 2.8] : type === 'poli' ? [-1.5, 1.5] : [-2, 2.4];
     for (const [x, z] of [[-1.3, wz[0]], [1.3, wz[0]], [-1.3, wz[1]], [1.3, wz[1]]]) { const w = new THREE.Mesh(new THREE.CylinderGeometry(.6, .6, .5, 10).rotateZ(Math.PI / 2), wm); w.position.set(x, .6, z); g.add(w); }
   }
-  const ly = { bulldozer: 4.55, bus: 3.9, ambu: 3.5, poli: 2.5 }[type] ?? 2.85, lz = { bulldozer: -.8, bus: 3.4, ambu: .6, poli: -.2 }[type] ?? 2.6;
+  const ly = { bulldozer: 4.55, bus: 3.9, ambu: 3.5, poli: 2.5, elec: 2.55 }[type] ?? 2.85, lz = { bulldozer: -.8, bus: 3.4, ambu: .6, poli: -.2, elec: 1.6 }[type] ?? 2.6;
   const lb = box(type === 'bulldozer' ? .5 : 1.6, .3, .4, new THREE.MeshBasicMaterial({ color: 0x2a6bff }), 0, ly, lz); g.userData.light = lb;
   g.scale.setScalar(1.5);
   return g;
@@ -1079,6 +1088,7 @@ function slowTick() {
   for (const h of G.houses) if (h.town < 0 && h.people > 0 && DIST[h.cell] < 26 && !h.warned) { h.warned = 1; log(`🏠 Hay ${h.people} personas en <b>${h.name}</b> y el fuego se acerca. Envía un vehículo a avisarles.`, 'warn'); }
   for (const f of G.farms) if (f.state === 'waiting' && DIST[f.cell] < 26 && !f.warned) { f.warned = 1; log(`🐑 El fuego amenaza <b>${f.name}</b> (${f.n} ${f.kind}). Manda el camión de ganado.`, 'warn'); }
   linesTick();
+  trafficSlow();
   // medios aéreos: noche y viento
   const gr = airGrounded(false);
   if (G.units.some(u => u.air) && gr !== G.airGr) {
@@ -1101,7 +1111,7 @@ function linesTick() {
       if (was === 'on') {
         let n = 0; for (let k = 0; k < 30 && n < 2; k++) { const c = hit + Math.round(rr(-4, 4)) * N + Math.round(rr(-4, 4)); if (c >= 0 && c < NN && STATE[c] === 0 && ignite(c)) n++; }
         log(`⚡ ¡El fuego ha derribado la línea de alta tensión! Los cables con corriente han provocado ${n ? 'nuevos focos' : 'chispazos'}. ${s.feeds.map(t => G.towns[t].name).join(' y ')} sin luz.`, 'bad');
-      } else log('⚡ El fuego ha derribado la línea eléctrica (ya estaba sin tensión).', 'warn');
+      } else log(`⚡ El fuego ha derribado la línea eléctrica (ya estaba sin tensión${s.bypass ? '; los pueblos siguen con luz gracias al aislamiento' : ''}).`, 'warn');
       continue;
     }
     // chispazos con viento fuerte
@@ -1114,7 +1124,7 @@ function linesTick() {
 }
 function updatePower() {
   for (const t of G.towns) {
-    const p = G.lines.filter(s => s.feeds.includes(t.id)).every(s => s.state === 'on');
+    const p = G.lines.filter(s => s.feeds.includes(t.id)).every(s => s.state === 'on' || s.state === 'iso' || s.bypass); // aislada por los ingenieros: luz por otra línea
     if (p === t.powered) continue; t.powered = p;
     for (const h of t.houses) if (h.state !== 'destroyed') winMesh.setMatrixAt(h.id, p ? h.mat : ZERO4);
     winMesh.instanceMatrix.needsUpdate = true;
@@ -1195,11 +1205,181 @@ function carsStep(dt) {
     if (STATE[cell] === 1 && INT[cell] > .35) { G.stats.victims += c.people; endGame(false, `El fuego ha alcanzado un coche de evacuados en la carretera (${c.people} víctimas). La salida quedó cortada.`); return; }
     if (c.pi >= c.path.length) { G.stats.evac += c.people; G.cars.splice(k, 1); continue; }
     const n = c.path[c.pi];
-    if (STATE[n] === 1 && INT[n] > .1) { c.wait += dt; if (c.wait > 4) { c.wait = 0; const e = G.exits[0] === c.path[c.path.length - 1] ? G.exits[1] : G.exits[0]; const alt = astar(cell, i => i === e, i => octile(i, e), (a, b, d) => STATE[b] === 1 ? Infinity : carCost(a, b, d), 60000); if (alt) { c.path = alt; c.pi = 0; log('🚗 Carretera cortada por el fuego: los evacuados buscan otra salida.', 'warn'); } } continue; }
+    if ((STATE[n] === 1 && INT[n] > .1) || G.accMask[n]) { c.wait += dt; if (c.wait > 4) { c.wait = 0; const acc = G.accMask[n]; const e = acc ? c.path[c.path.length - 1] : G.exits[0] === c.path[c.path.length - 1] ? G.exits[1] : G.exits[0]; let alt = astar(cell, i => i === e, i => octile(i, e), (a, b, d) => STATE[b] === 1 ? Infinity : carCost(a, b, d), 60000); if (!alt && acc) alt = carRoute(cell); if (alt) { c.path = alt; c.pi = 0; log(acc ? '🚗 Un accidente corta la carretera: los evacuados dan un rodeo.' : '🚗 Carretera cortada por el fuego: los evacuados buscan otra salida.', 'warn'); } } continue; }
     const tx = cx(n), tz = cz(n), dx = tx - c.x, dz = tz - c.z, d = Math.hypot(dx, dz), sp = 3.4 * dt;
     if (d <= sp) { c.x = tx; c.z = tz; c.pi++; } else { c.x += dx / d * sp; c.z += dz / d * sp; c.heading = Math.atan2(dx, dz); }
   }
 }
+// ───────────── Tráfico civil ─────────────
+// vecinos, turistas y curiosos circulan entre pueblos y salidas. Los vehículos con sirena los apartan;
+// el autobús, el camión de ganado y los ingenieros se comen los atascos salvo que los escolte una patrulla
+let TRAF = null, RTF = Math.random; const trafMarks = [];
+function initTraffic() {
+  RTF = mulberry32((G.seed ^ 0x2545f491) >>> 0); // aleatoriedad propia: el tráfico no altera el fuego calibrado de cada nivel
+  TRAF = new Uint8Array(NN); trafMarks.length = 0;
+  G.traffic = []; G.accs = []; G.accMask = new Uint8Array(NN); G.trafNext = 2; G.accNext = 100; G.curNext = 90;
+  G.trafN = Math.round(4 + 9 * G.L.p + (G.units.some(u => u.type === 'poli') ? 4 : 0));
+  // rutas fijas entre los extremos de la red: pueblo ↔ salida, pueblo ↔ pueblo y salida ↔ salida
+  G.troutes = [];
+  for (const t of G.towns) G.exits.forEach((e, k) => { if (t.paths[k] && t.paths[k].length) G.troutes.push({ a: t.cell, b: e, cells: [t.cell, ...t.paths[k]] }); });
+  const T = G.towns.map(t => t.cell);
+  for (const [a, b] of [[G.exits[0], G.exits[1]], [T[0], T[1]], [T[1], T[2]], [T[0], T[2]]]) { const p = astar(a, i => i === b, i => octile(i, b), carCost, 60000); if (p && p.length) G.troutes.push({ a, b, cells: [a, ...p] }); }
+}
+const trafBad = c => STATE[c] === 1 || DIST[c] < 3 || G.accMask[c] || (G.blocks && G.blocks[c]);
+function trafRoute(from, to) { return astar(from, i => i === to, i => octile(i, to), (a, b, d) => STATE[b] === 1 || DIST[b] < 3 ? Infinity : carCost(a, b, d), 40000); }
+const nearExit = c => G.exits.slice().sort((a, b) => octile(a, c) - octile(b, c))[0];
+function spawnCar() {
+  const open = G.exits.concat(G.towns.filter(t => !t.alarm).map(t => t.cell)); // a un pueblo evacuado no va nadie
+  const rs = G.troutes.filter(r => open.includes(r.a) && open.includes(r.b)); if (!rs.length) return;
+  const r = rs[Math.floor(RTF() * rs.length)], cells = RTF() < .5 ? r.cells.slice().reverse() : r.cells, from = cells[0];
+  if (trafBad(from)) return;
+  let path = cells.slice(1), dest = cells[cells.length - 1], cur = false;
+  // curiosos: se acercan por la carretera a ver el fuego (solo si hay policía para desalojarlos)
+  if (!G.demo && burning.length > 20 && G.t > G.curNext && G.units.some(u => u.type === 'poli') && RTF() < .4) {
+    const spots = []; for (let i = 0; i < NN; i++) if (ROADF[i] && DIST[i] >= 6 && DIST[i] <= 11) spots.push(i);
+    if (spots.length) { const s = spots[Math.floor(RTF() * spots.length)], p = trafRoute(from, s); if (p && p.length) { path = p; dest = s; cur = true; G.curNext = G.t + 140 + RTF() * 120; } }
+  }
+  if (!cur && path.some(trafBad)) { path = trafRoute(from, dest); if (!path) return; }
+  G.traffic.push({ x: cx(from), z: cz(from), path, pi: 0, heading: 0, orig: from, dest, cur, state: 'drive', wait: 0, yieldT: 0, off: 0 });
+}
+// atasco: lo que frena a una unidad la gente que hay en la carretera
+function trafficFactor(u, n) {
+  if (!TRAF || !G.traffic) return 1;
+  let f = G.accMask[n] ? .25 : 1; // pasar junto a un accidente obliga a ir casi parado
+  if (SIREN.has(u.type) || G.t < (u.escUntil || 0) || !ROADF[n]) return f;
+  let d = 0; const x = cx(n), z = cz(n);
+  for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) { const X = x + dx, Z = z + dz; if (X >= 0 && Z >= 0 && X < N && Z < N) d += TRAF[Z * N + X]; }
+  // detrás de un coche que va en el mismo sentido (o parado) no hay forma de adelantar en estas carreteras
+  let behind = 1; const hx = Math.sin(u.heading), hz = Math.cos(u.heading);
+  for (const c of G.traffic) {
+    const ddx = c.x - u.x, ddz = c.z - u.z; if (Math.abs(ddx) > 3 || Math.abs(ddz) > 3) continue;
+    const along = ddx * hx + ddz * hz; if (along < .2 || along > 2.6 || Math.abs(ddx * hz - ddz * hx) > 1.1) continue;
+    if (c.state === 'watch' || c.wait > 0) behind = Math.min(behind, .2); else if (Math.cos(c.heading - u.heading) > .3) behind = Math.min(behind, .5);
+  }
+  if (d || behind < 1) {
+    f *= Math.max(.2, behind / (1 + .3 * d)); u.jam = G.t + .6;
+    if (!G.jamWarned && !G.demo) { G.jamWarned = 1; log(G.units.some(p => p.type === 'poli') ? `🚗 ${u.name} se ha metido en un atasco: sin sirena, el tráfico no se aparta. Selecciona una patrulla y haz clic en ${u.name} para que lo escolte.` : `🚗 El tráfico frena a ${u.name}: los vehículos sin sirena no pueden saltarse los atascos.`, 'warn'); }
+  }
+  return f;
+}
+function trafficStep(dt) {
+  if (!G.traffic || G.t < 1.5) return;
+  for (const i of trafMarks) TRAF[i] = 0; trafMarks.length = 0;
+  for (const c of G.traffic) { const i = Math.round(c.z) * N + Math.round(c.x); TRAF[i] = Math.min(255, TRAF[i] + (c.state === 'watch' ? 3 : 1)); trafMarks.push(i); }
+  for (const a of G.accs) { TRAF[a.cell] = Math.min(255, TRAF[a.cell] + 3); trafMarks.push(a.cell); }
+  if (G.t >= G.trafNext) { G.trafNext = G.t + (G.traffic.length < G.trafN / 2 ? 1 : 2.5 + RTF() * 3); if (G.traffic.length < G.trafN) spawnCar(); }
+  // quién hace apartarse a los coches: vehículos con sirena en marcha y los que van escoltados
+  const sirens = G.units.filter(u => !u.air && ((SIREN.has(u.type) && u.path && u.pi < u.path.length) || G.t < (u.escUntil || 0)));
+  for (let k = G.traffic.length - 1; k >= 0; k--) {
+    const c = G.traffic[k], cell = Math.round(c.z) * N + Math.round(c.x);
+    if (STATE[cell] === 1 && INT[cell] > .35) {
+      G.traffic.splice(k, 1); dropLabel(c); addDamage(60000);
+      if (!G.carBurnWarned) { G.carBurnWarned = 1; log('🔥 El fuego ha alcanzado un coche particular. Sus ocupantes han huido a pie, pero el coche ha ardido.', 'bad'); }
+      continue;
+    }
+    for (const u of sirens) if (Math.abs(u.x - c.x) < 2.6 && Math.abs(u.z - c.z) < 2.6) { c.yieldT = 1.2; break; }
+    c.yieldT -= dt; c.off += ((c.yieldT > 0 ? .55 : 0) - c.off) * Math.min(1, dt * 4);
+    if (c.state === 'watch') { watchStep(c, k, cell); continue; }
+    if (c.yieldT > 0) continue; // parado en el arcén
+    if (c.pi >= c.path.length) {
+      if (c.cur) { c.state = 'watch'; addLabel('cur', c, 'danger', cellWorld(cell), 8); log(`👀 Unos curiosos han parado en la carretera cerca de <b>${nearestPlace(cell)}</b> para ver el incendio. Estorban el paso y corren peligro: manda una patrulla a desalojarlos.`, 'warn'); }
+      else G.traffic.splice(k, 1);
+      continue;
+    }
+    const n = c.path[c.pi];
+    if (STATE[n] === 1 || DIST[n] < 2 || G.accMask[n] || (G.blocks && G.blocks[n])) { // carretera cortada: espera y luego da la vuelta o rodea
+      c.wait += dt;
+      if (c.wait > 3) { c.wait = 0; const p = trafRoute(cell, c.dest) || trafRoute(cell, c.orig) || trafRoute(cell, nearExit(cell)); if (p && p.length) { c.path = p; c.pi = 0; c.dest = p[p.length - 1]; } }
+      continue;
+    }
+    c.wait = 0;
+    const tx = cx(n), tz = cz(n), dx = tx - c.x, dz = tz - c.z, d = Math.hypot(dx, dz), sp = (ROADF[n] === 2 ? 1.6 : 2.4) * dt; // despacio: carreteras de montaña y humo
+    if (d <= sp) { c.x = tx; c.z = tz; c.pi++; } else { c.x += dx / d * sp; c.z += dz / d * sp; }
+    if (d > .01) c.heading = Math.atan2(dx, dz);
+  }
+}
+// curiosos parados mirando el fuego
+function watchStep(c, k, cell) {
+  const leave = () => { c.state = 'drive'; c.cur = false; dropLabel(c); const e = nearExit(cell), p = trafRoute(cell, e); c.path = p || []; c.pi = 0; c.dest = e; };
+  if (G.units.some(u => u.type === 'poli' && !u.air && cheb(u.cell, cell) <= 3)) { leave(); log('🚓 La patrulla ha desalojado a los curiosos de la carretera.', 'ok'); return; }
+  if (DIST[cell] <= 3) {
+    if (RTF() < .5) { G.traffic.splice(k, 1); dropLabel(c); makeAcc(cell, c.heading, '💥 Los curiosos han huido en pánico al llegar el fuego y han chocado'); }
+    else { leave(); log('😱 Los curiosos han salido huyendo en el último momento.', 'warn'); }
+  }
+}
+function makeAcc(cell, heading, why) {
+  const a = { cell, x: cx(cell), z: cz(cell), heading, hurt: 1 + Math.floor(RTF() * 3), work: 0, t: G.t };
+  G.accs.push(a); G.accMask[cell] = 1; G.accNext = G.t + 120;
+  addLabel('acc', a, 'alarm', cellWorld(cell), 8); addAlert(cell, '💥 Accidente');
+  log(`${why} cerca de <b>${nearestPlace(cell)}</b>: ${a.hurt} herido${a.hurt > 1 ? 's' : ''} y la carretera cortada. Manda una ambulancia o una patrulla.`, 'bad');
+  for (const u of G.cars) if (u.path.slice(u.pi).includes(cell)) u.wait = 3.5; // los evacuados que iban por ahí buscan rodeo enseguida
+}
+function removeAcc(k) { const a = G.accs[k]; G.accs.splice(k, 1); G.accMask[a.cell] = G.accs.some(o => o.cell === a.cell) ? 1 : 0; dropLabel(a); }
+// cada segundo: accidentes nuevos y atención a los que hay
+function trafficSlow() {
+  if (!G.traffic || G.demo) return;
+  if (!G.units.some(u => u.type === 'ambu' || u.type === 'poli')) return; // sin ambulancias ni policía no hay quien los atienda
+  if (G.t > G.accNext && G.accs.length < 2) for (let k = G.traffic.length - 1; k >= 0; k--) {
+    const c = G.traffic[k]; if (c.state !== 'drive' || c.yieldT > 0) continue;
+    const cell = Math.round(c.z) * N + Math.round(c.x); if (!ROADF[cell] || G.towns.some(t => cheb(t.cell, cell) < 6)) continue;
+    if (RTF() < (DIST[cell] < 14 ? .005 : .0004)) { G.traffic.splice(k, 1); makeAcc(cell, c.heading, DIST[cell] < 14 ? '💥 Accidente de tráfico por el humo' : '💥 Accidente de tráfico'); break; }
+  }
+  for (let k = G.accs.length - 1; k >= 0; k--) {
+    const a = G.accs[k];
+    if (DIST[a.cell] <= 1) { addDamage(90000); log('🔥 El fuego ha llegado al accidente: otros conductores se han llevado a los heridos, pero los coches han ardido.', 'bad'); removeAcc(k); continue; }
+    addDamage(300 * a.hurt); // heridos sin atender y carretera cortada
+    const hs = G.units.filter(u => (u.type === 'ambu' || u.type === 'poli') && cheb(u.cell, a.cell) <= 2 && !(u.path && u.pi < u.path.length));
+    if (!hs.length) continue;
+    const amb = hs.some(u => u.type === 'ambu'); a.work += amb ? 1 : .5;
+    for (const u of hs) { u.busyAcc = G.t + 1.5; u.status = `${u.type === 'ambu' ? 'Atendiendo a los heridos' : 'Despejando el accidente'} · ${Math.min(99, Math.round(a.work / 8 * 100))} %`; }
+    if (a.work >= 8) { G.stats.accs = (G.stats.accs || 0) + 1; log(`✅ Accidente atendido: ${a.hurt} herido${a.hurt > 1 ? 's' : ''} ${amb ? 'camino del hospital' : 'atendidos'} y la carretera despejada.`, 'ok'); removeAcc(k); }
+  }
+}
+function taskAcc(u, a, what = 'el accidente') { if (pathNear(u, a.cell, 1) || pathNear(u, a.cell, 2)) { u.task = { type: 'move', goal: a.cell }; u.status = 'Hacia ' + what; } else log(`⛔ ${u.name}: no puede llegar hasta ${what}.`, 'warn'); }
+function taskEscort(p, v) {
+  if (v === p || v.air || v.type === 'poli') return;
+  for (const o of G.units) if (o !== p && o.task.type === 'escort' && o.task.target === v) { o.task = { type: 'idle' }; o.status = 'En espera'; }
+  p.task = { type: 'escort', target: v, rp: 0 }; p.status = `Hacia ${v.name} para escoltarlo`;
+  log(`🚓 ${p.name} va a escoltar a ${v.name}: le abrirá paso entre el tráfico.`, 'info');
+}
+const freePoli = c => G.units.filter(u => u.type === 'poli').sort((a, b) => ((a.task.type === 'idle' ? 0 : 1) - (b.task.type === 'idle' ? 0 : 1)) || octile(a.cell, c) - octile(b.cell, c))[0] || null;
+
+// ───────────── Ingenieros eléctricos ─────────────
+// punto de la línea al que acercarse: el más cercano que no esté junto al fuego
+function lineSpot(s, from) {
+  let best = -1, bd = 1e9;
+  for (const c of s.cells) { if (VEG[c] === V.WATER || VEG[c] === V.ROCK || STATE[c] === 1) continue; const d = octile(c, from) + (DIST[c] < 6 ? 200 : 0); if (d < bd) { bd = d; best = c; } }
+  return best;
+}
+function elecOrder(u, s) {
+  const job = s.state === 'broken' ? 'repair' : s.state === 'iso' ? 'reconnect' : 'isolate';
+  const c = lineSpot(s, u.cell); if (c < 0) return;
+  if (!(pathNear(u, c, 1) || pathNear(u, c, 3))) return log(`⛔ ${u.name}: no puede llegar a la línea.`, 'warn');
+  u.task = { type: 'elec', line: s, job }; u.work = 0;
+  u.status = { isolate: 'Hacia la línea para aislar el tramo', reconnect: 'Hacia la línea para reconectarla', repair: 'Hacia la línea derribada' }[job];
+  log(`👷 ${u.name} ${{ isolate: 'va a aislar el tramo de línea', reconnect: 'va a reconectar el tramo', repair: 'va a reparar la línea derribada' }[job]} de ${s.feeds.map(t => G.towns[t].name).join(' y ')}.`, 'info');
+}
+const ELEC_T = { isolate: 12, reconnect: 6, repair: 25 };
+function elecStep(u, T, arrived, dt) {
+  if (!arrived) return;
+  const s = T.line, job = T.job;
+  if ((job === 'isolate' && s.state !== 'on' && s.state !== 'off') || (job === 'reconnect' && s.state !== 'iso') || (job === 'repair' && s.state !== 'broken')) { u.task = { type: 'idle' }; u.status = 'En espera'; return; }
+  if (DIST[u.cell] < 5) { u.status = '⚠️ Fuego demasiado cerca: no pueden trabajar'; if (!T.warned) { T.warned = 1; log(`👷 ${u.name}: el fuego está demasiado cerca para trabajar en la línea. Hay que llegar antes que el frente.`, 'warn'); } return; }
+  if (job === 'repair') { let near = 255; for (const c of s.cells) near = Math.min(near, DIST[c]); if (near < 4) { u.status = 'Esperando a que el fuego se aleje de la línea'; return; } }
+  u.work += dt; u.status = `${{ isolate: 'Aislando el tramo', reconnect: 'Reconectando', repair: 'Reparando la línea' }[job]} · ${Math.min(99, Math.round(u.work / ELEC_T[job] * 100))} %`;
+  if (R() < dt * 1.5) { const p = u.mesh.position; for (let e = 0; e < 4; e++) sparks.add(p.x + rr(-1, 1), p.y + 5, p.z + rr(-1, 1), rr(-2, 2), rr(2, 5), rr(-2, 2), rr(.2, .5), .5, .2, [1, 1, .8], [1, .7, .2], 1); }
+  if (u.work >= ELEC_T[job]) { u.work = 0; u.task = { type: 'idle' }; u.status = 'Trabajo terminado'; finishElec(s, job); }
+}
+function resumeDrops() { for (const u of G.units) if (u.task.blocked != null) { u.task = { type: 'drop', target: u.task.blocked }; u.status = 'Hacia la descarga'; } }
+function finishElec(s, job) {
+  const names = s.feeds.map(t => G.towns[t].name).join(' y ');
+  if (job === 'isolate') { s.state = 'iso'; s.bypass = true; addDamage(5000); resumeDrops(); log(`👷 Tramo aislado: la línea ya no tiene corriente y ${names} siguen con luz por otra línea. Los medios aéreos pueden descargar cerca.`, 'ok'); }
+  else if (job === 'reconnect') { s.state = 'on'; s.bypass = false; log('⚡ Los ingenieros han vuelto a conectar el tramo.', 'info'); }
+  else { s.state = 'on'; s.bypass = false; s.wire.visible = true; addDamage(20000); log(`👷 Línea reparada: ${names} vuelven a tener luz.`, 'ok'); }
+  updatePower(); renderPanel();
+}
+const elecUnit = s => G.units.filter(u => u.type === 'elec').sort((a, b) => ((a.task.type === 'elec' ? 1 : 0) - (b.task.type === 'elec' ? 1 : 0)) || octile(a.cell, s.cells[0]) - octile(b.cell, s.cells[0]))[0] || null;
+
 function wildStep(dt) {
   for (const a of G.wild) {
     if (!a.alive) continue;
@@ -1335,7 +1515,7 @@ function doDrop(u, T) {
   const cells = dropCells(u, T.target);
   if (cells.some(lineLive)) {
     u.task = { type: 'wait', blocked: T.target }; u.status = 'Esperando corte de tensión';
-    log(`⚡ ${u.name} no puede descargar: hay una línea de alta tensión con corriente. Haz clic en la línea y pide el corte.`, 'warn'); return;
+    log(`⚡ ${u.name} no puede descargar: hay una línea de alta tensión con corriente. Haz clic en la línea y pide el corte${G.units.some(e => e.type === 'elec') ? ' o manda a los ingenieros a aislar el tramo' : ''}.`, 'warn'); return;
   }
   const k = (1 + .2 * own('ret')) * (u.water / u.maxW) * (u.type === 'heli' ? 1.2 : 1.1) * (u.dropK || 1);
   for (const c of cells) { const d = Math.hypot(cx(c) - cx(T.target), cz(c) - cz(T.target)); WET[c] = Math.min(1.6, WET[c] + k * (u.type === 'heli' ? 1 - d * .15 : 1)); changed.push(c); }
@@ -1464,7 +1644,8 @@ function moveUnit(u, dt) {
   if (STATE[n] === 1 && INT[n] > .06) { u.blocked = true; return false; }
   const tx = cx(n), tz = cz(n), dx = tx - u.x, dz = tz - u.z, d = Math.hypot(dx, dz);
   const vc = VP[VEG[n]].cost, cost = ROADF[n] ? (ROADF[n] === 2 ? 1.5 : 1) : u.type === 'brigada' ? 1.8 : u.type === 'bulldozer' ? Math.min(vc, 2.5) : vc;
-  const sp = ({ bomba: 4.2, cisterna: 3.6, ganado: 4, brigada: 2.8, bulldozer: 2.4, bus: 3.6, ambu: 5.2, poli: 5.4 }[u.type]) * G.spd * (u.spk || 1) / Math.sqrt(cost) * dt;
+  let sp = ({ bomba: 4.2, cisterna: 3.6, ganado: 4, brigada: 2.8, bulldozer: 2.4, bus: 3.6, ambu: 5.2, poli: 5.4, elec: 4.8 }[u.type]) * G.spd * (u.spk || 1) / Math.sqrt(cost) * dt;
+  sp *= trafficFactor(u, n);
   if (d <= sp) { u.x = tx; u.z = tz; u.pi++; } else { u.x += dx / d * sp; u.z += dz / d * sp; }
   if (d > .01) u.heading = Math.atan2(dx, dz);
   u.cell = Math.round(u.z) * N + Math.round(u.x);
@@ -1552,7 +1733,7 @@ function unitsStep(dt) {
         }
         if (arrived && u.type === 'bomba' && u.water > 0 && spray(u, dt)) u.status = 'Defendiendo posición';
         // ambulancia libre: atiende sola a la dotación más castigada
-        if (u.type === 'ambu' && u.task.type === 'idle' && G.t > (u.scan || 0)) {
+        if (u.type === 'ambu' && u.task.type === 'idle' && G.t > (u.scan || 0) && G.t > (u.busyAcc || 0)) {
           u.scan = G.t + 2;
           const v = G.units.filter(o => !o.air && o !== u && o.hp < 65 && !G.units.some(a => a.task.type === 'heal' && a.task.target === o)).sort((a, b) => a.hp - b.hp)[0];
           if (v) taskHeal(u, v);
@@ -1618,6 +1799,17 @@ function unitsStep(dt) {
         if (!T.on) { T.on = true; updateBlocks(); log(`🚓 ${u.name} ha cortado la carretera: los coches de evacuados buscarán otra salida.`, 'info'); }
         u.status = 'Control de carretera · paso cortado';
         break;
+      case 'escort': { // va por delante del escoltado, abriéndole paso
+        const v = T.target;
+        if (cheb(u.cell, v.cell) <= 3) { v.escUntil = G.t + .6; u.status = `Escoltando a ${v.name}`; } else u.status = `Hacia ${v.name} para escoltarlo`;
+        if (G.t > T.rp || arrived) {
+          T.rp = G.t + 1.2;
+          const aim = v.path && v.pi < v.path.length ? v.path[Math.min(v.path.length - 1, v.pi + 3)] : v.cell;
+          if (cheb(u.cell, aim) > 1) { if (!pathNear(u, aim, 1)) pathNear(u, v.cell, 2); } else { u.path = []; u.pi = 0; }
+        }
+        break;
+      }
+      case 'elec': elecStep(u, T, arrived, dt); break;
       case 'load':
         if (!arrived) break;
         if (T.farm.state !== 'waiting') { u.task = { type: 'idle' }; u.status = 'En espera'; break; }
@@ -1639,6 +1831,9 @@ function unitsStep(dt) {
 function order(u, p, ent) {
   const c = p.cell;
   if (u.air) return u.type === 'hres' ? hresOrder(u, c, ent) : airOrder(u, c);
+  if (u.type === 'elec') { if (ent && ent.kind === 'line') return elecOrder(u, ent.obj); if (ent && ent.kind === 'base') return taskBase(u); return taskMove(u, c); }
+  if (ent && ent.kind === 'acc' && (u.type === 'ambu' || u.type === 'poli')) return taskAcc(u, ent.obj);
+  if (ent && ent.kind === 'cur' && u.type === 'poli') return taskAcc(u, { cell: Math.round(ent.obj.z) * N + Math.round(ent.obj.x) }, 'los curiosos');
   if (ent && ent.kind === 'house' && ent.obj.town < 0 && ent.obj.people > 0) return taskRescue(u, ent.obj);
   if (u.type === 'bus' || u.type === 'ambu' || u.type === 'poli') {
     if (ent && (ent.kind === 'town' || (ent.kind === 'house' && ent.obj.town >= 0))) { const t = ent.kind === 'town' ? ent.obj : G.towns[ent.obj.town]; if (townLeft(t)) return taskEvac(u, t); }
@@ -1668,7 +1863,7 @@ function nearestShoreTo(c) { let best = null, bd = 1e9; for (const s of G.shore)
 // ───────────── Bucle de simulación ─────────────
 function simStep(dt) {
   if (G.over) return;
-  G.t += dt; weatherStep(dt); fireStep(dt); housesStep(dt); if (G.over) return; carsStep(dt); if (G.over) return; wildStep(dt); unitsStep(dt);
+  G.t += dt; weatherStep(dt); fireStep(dt); housesStep(dt); if (G.over) return; carsStep(dt); if (G.over) return; trafficStep(dt); if (G.over) return; wildStep(dt); unitsStep(dt);
   G.slow += dt; if (G.slow >= 1) { G.slow = 0; slowTick(); }
 }
 
@@ -1754,6 +1949,8 @@ function entityAt(p) {
   for (const f of G.farms) test('farm', f, f.grp.position, 12);
   for (const t of G.towns) test('town', t, cellWorld(t.cell), CELL * 5.5);
   test('base', null, cellWorld(G.base), 16);
+  for (const a of G.accs) test('acc', a, cellWorld(a.cell), 10);
+  for (const c of G.traffic) if (c.state === 'watch') test('cur', c, { x: wx(c.x), z: wx(c.z) }, 10);
   if (!best) for (const s of G.lines) if (s.set.has(p.cell)) best = { kind: 'line', obj: s };
   return best;
 }
@@ -1776,6 +1973,8 @@ function clickAt(sx, sy) {
   if (su && !su.air && G.sel && G.sel.kind === 'unit' && G.sel.obj !== su && (G.sel.obj.type === 'ambu' || G.sel.obj.type === 'hres')) {
     const a = G.sel.obj; S.ui('click'); if (a.type === 'ambu') taskHeal(a, su); else hresOrder(a, su.cell, { kind: 'unit', obj: su }); return;
   }
+  // patrulla seleccionada + clic en otro vehículo de tierra = escoltarlo entre el tráfico
+  if (su && !su.air && su.type !== 'poli' && G.sel && G.sel.kind === 'unit' && G.sel.obj.type === 'poli') { S.ui('click'); taskEscort(G.sel.obj, su); return; }
   // autobomba seleccionada + clic en una cisterna = ir a repostar en ella
   if (su && su.type === 'cisterna' && G.sel && G.sel.kind === 'unit' && G.sel.obj.type === 'bomba') {
     const b = G.sel.obj; S.ui('click');
@@ -1811,7 +2010,7 @@ function renderUnits() {
   $('units').querySelectorAll('.uc').forEach(el => { el.onclick = () => select({ kind: 'unit', obj: G.units[+el.dataset.k] }); el.ondblclick = () => focusOn(G.units[+el.dataset.k].mesh.position); });
 }
 function updateUnitsUI() {
-  G.units.forEach((u, k) => { const s = $('us' + k); if (!s) return; s.textContent = u.status; const w = $('uw' + k); if (w) w.style.width = (u.water / u.maxW * 100) + '%'; const h = $('uh' + k); if (!h) return; h.style.width = u.hp + '%'; h.style.background = u.hp < 45 ? 'var(--bad)' : u.hp < 75 ? 'var(--warn)' : 'var(--ok)'; });
+  G.units.forEach((u, k) => { const s = $('us' + k); if (!s) return; s.textContent = u.status + (G.t < (u.jam || 0) ? ' · 🚗 atasco' : G.t < (u.escUntil || 0) ? ' · 🚓 escoltado' : ''); const w = $('uw' + k); if (w) w.style.width = (u.water / u.maxW * 100) + '%'; const h = $('uh' + k); if (!h) return; h.style.width = u.hp + '%'; h.style.background = u.hp < 45 ? 'var(--bad)' : u.hp < 75 ? 'var(--warn)' : 'var(--ok)'; });
 }
 function renderPanel() {
   const el = $('panel'), s = G.sel;
@@ -1829,18 +2028,26 @@ function renderPanel() {
       avion: 'Clic cerca del fuego para descargar una franja larga en la dirección de vuelo. Carga solo en embalses grandes.',
       bus: 'Clic en un pueblo: recoge hasta 40 vecinos que no pueden irse solos y los lleva a la base · clic en una casa aislada: la evacúa y sigue con las casas cercanas que tengan gente.',
       ambu: 'Clic en una casa aislada para evacuarla (tarda la mitad) · clic en un pueblo para recoger a 4 personas · selecciona la ambulancia y haz clic en un camión o una brigada para atender a su dotación. Si está libre, atiende sola a las dotaciones con poca salud.',
-      poli: 'Clic en una carretera: la corta en ese punto y los coches de evacuados buscan otra salida (para que no entren en el fuego) · déjala parada junto a un pueblo con alarma y los vecinos salen antes · también puede sacar a 3 personas de una casa.',
+      poli: 'Clic en el autobús, el camión de ganado o los ingenieros para escoltarlos: van delante con la sirena y el tráfico se aparta · clic en una carretera para cortarla (los coches buscan otra salida) · clic en unos curiosos o un accidente para despejarlos · parada junto a un pueblo con alarma, los vecinos salen antes.',
+      elec: 'Clic en una línea eléctrica: si tiene corriente, aíslan ese tramo (12 s, 5 mil €) y los pueblos siguen con luz; si está aislada, la reconectan; si la ha derribado el fuego, la reparan cuando el frente se aleja (20 mil €). No trabajan con las llamas a menos de 150 m. No llevan sirena: en los atascos, pide escolta.',
       hres: 'Vuela en línea recta: clic en una casa aislada o en un pueblo para izar a la gente con la grúa (8 por viaje), aunque el fuego haya cortado la carretera · clic en un camión o una brigada para atender a su dotación desde el aire.',
     }[u.type];
     const cutting = G.mode && G.mode.unit === u;
-    h = `<h3>${ICON[u.type]} ${u.name}</h3><p>${u.status}${u.type === 'bomba' || u.type === 'cisterna' || (u.air && u.maxW) ? ` · Agua ${wPct}%` : ''}${u.air ? '' : ` · Dotación ${Math.round(u.hp / 10) * 10}%`}${u.carry && !u.carryFarm ? ` · Lleva ${u.carry} personas` : ''}</p>
+    h = `<h3>${ICON[u.type]} ${u.name}</h3><p>${u.status}${G.t < (u.jam || 0) ? ' · 🚗 En un atasco' : ''}${G.t < (u.escUntil || 0) ? ' · 🚓 Escoltado' : ''}${u.type === 'bomba' || u.type === 'cisterna' || (u.air && u.maxW) ? ` · Agua ${wPct}%` : ''}${u.air ? '' : ` · Dotación ${Math.round(u.hp / 10) * 10}%`}${u.carry && !u.carryFarm ? ` · Lleva ${u.carry} personas` : ''}</p>
     <p style="color:var(--muted)">${cutting ? (G.mode.kind === 'wet' ? '<span class="mode">💦 Haz clic en la zona SIN FUEGO que quieres mojar (unos 200 m de ancho) · clic derecho para cancelar</span>' : `<span class="mode">✂️ ${G.mode.a == null ? 'Haz clic donde EMPIEZA el cortafuegos' : 'Ahora haz clic donde TERMINA'} · clic derecho para cancelar</span>`) : help}</p>
-    <div class="row">${u.type === 'bomba' ? `<button id="pRefill">💧 Repostar</button><button class="act" id="pWet">💦 ${cutting ? 'Cancelar' : 'Mojar zona'}</button>` : u.type === 'cisterna' ? '<button id="pRefill">💧 Llenar ahora</button>' : ''}${u.type === 'brigada' || u.type === 'bulldozer' ? `<button class="act" id="pCutL">✂️ ${cutting ? 'Cancelar' : 'Trazar cortafuegos'}</button>` : ''}${!u.air && u.type !== 'ambu' && u.hp < 90 && G.units.some(a => a.type === 'ambu' || a.type === 'hres') ? '<button class="act" id="pMed">🚑 Pedir atención sanitaria</button>' : ''}${u.type === 'poli' && u.task.type === 'block' ? '<button id="pUnblock">🚧 Levantar el corte</button>' : ''}<button id="pBase">🏠 Volver a la base</button><button id="pFocus">🎯 Centrar</button></div>`;
+    <div class="row">${u.type === 'bomba' ? `<button id="pRefill">💧 Repostar</button><button class="act" id="pWet">💦 ${cutting ? 'Cancelar' : 'Mojar zona'}</button>` : u.type === 'cisterna' ? '<button id="pRefill">💧 Llenar ahora</button>' : ''}${u.type === 'brigada' || u.type === 'bulldozer' ? `<button class="act" id="pCutL">✂️ ${cutting ? 'Cancelar' : 'Trazar cortafuegos'}</button>` : ''}${!u.air && u.type !== 'ambu' && u.hp < 90 && G.units.some(a => a.type === 'ambu' || a.type === 'hres') ? '<button class="act" id="pMed">🚑 Pedir atención sanitaria</button>' : ''}${u.type === 'poli' && u.task.type === 'block' ? '<button id="pUnblock">🚧 Levantar el corte</button>' : ''}${u.type === 'poli' && u.task.type === 'escort' ? '<button id="pUnblock">🚓 Terminar la escolta</button>' : ''}${(u.type === 'bus' || u.type === 'ganado' || u.type === 'elec') && G.units.some(p => p.type === 'poli') ? (G.units.some(p => p.task.type === 'escort' && p.task.target === u) ? '<button id="pEscOff">🚓 Quitar la escolta</button>' : '<button class="act" id="pEsc">🚓 Pedir escolta policial</button>') : ''}<button id="pBase">🏠 Volver a la base</button><button id="pFocus">🎯 Centrar</button></div>`;
   } else if (s.kind === 'line') {
-    const L = s.obj, names = L.feeds.map(t => G.towns[t].name).join(' y ');
-    h = `<h3>⚡ Línea de alta tensión</h3><p>${{ on: 'En tensión', off: 'Tensión cortada', broken: 'Derribada por el fuego' }[L.state]} · alimenta a ${names}</p>
-    <p style="color:var(--muted)">${L.state === 'on' ? 'Con corriente, los medios aéreos no pueden descargar a menos de 60 m de los cables, y con viento fuerte pueden saltar chispazos. Si el fuego llega a la línea, los cables caerán y provocarán más focos.' : L.state === 'off' ? 'Sin corriente se puede descargar agua cerca sin peligro, pero los pueblos que alimenta están sin luz y eso genera pérdidas cada minuto.' : 'La línea ha caído. Los técnicos la repararán cuando se apague el incendio.'}</p>
-    <div class="row">${L.state === 'on' ? '<button class="act" id="pCut">🔌 Pedir el corte de tensión (50 mil €)</button>' : L.state === 'off' ? '<button id="pRestore">⚡ Restablecer la tensión</button>' : ''}</div>`;
+    const L = s.obj, names = L.feeds.map(t => G.towns[t].name).join(' y '), hasE = G.units.some(u => u.type === 'elec'), job = G.units.find(u => u.task.type === 'elec' && u.task.line === L);
+    h = `<h3>⚡ Línea de alta tensión</h3><p>${{ on: 'En tensión', off: 'Tensión cortada', iso: 'Tramo aislado por los ingenieros', broken: 'Derribada por el fuego' }[L.state]} · alimenta a ${names}${L.state === 'broken' && L.bypass ? ' (siguen con luz por otra línea)' : ''}</p>
+    <p style="color:var(--muted)">${L.state === 'on' ? 'Con corriente, los medios aéreos no pueden descargar a menos de 60 m de los cables, y con viento fuerte pueden saltar chispazos. Si el fuego llega a la línea, los cables caerán y provocarán más focos.' + (hasE ? ' <b>Los ingenieros pueden aislar solo este tramo</b>: tardan un poco, pero los pueblos no se quedan sin luz.' : '') : L.state === 'off' ? 'Sin corriente se puede descargar agua cerca sin peligro, pero los pueblos que alimenta están sin luz y eso genera pérdidas cada minuto.' : L.state === 'iso' ? 'Sin corriente en este tramo: se puede descargar agua cerca y no hay chispazos. Los pueblos siguen con luz por otra línea.' : hasE ? 'La líneaha caído. Los ingenieros pueden repararla cuando el fuego se aleje de ella.' : 'La línea ha caído. Los técnicos la repararán cuando se apague el incendio.'}${job ? `<br><b>👷 ${job.name}: ${job.status}</b>` : ''}</p>
+    <div class="row">${L.state === 'on' ? '<button class="act" id="pCut">🔌 Pedir el corte general (50 mil €)</button>' : L.state === 'off' ? '<button id="pRestore">⚡ Restablecer la tensión</button>' : ''}${hasE && !job ? (L.state === 'on' || L.state === 'off' ? `<button class="act" id="pIso">👷 Aislar solo este tramo (5 mil €${L.state === 'off' ? ', vuelve la luz' : ''})</button>` : L.state === 'iso' ? '<button id="pIso">👷 Reconectar el tramo</button>' : '<button class="act" id="pIso">👷 Reparar la línea (20 mil €)</button>') : ''}</div>`;
+  } else if (s.kind === 'acc') {
+    const a = s.obj;
+    h = `<h3>💥 Accidente de tráfico</h3><p>${a.hurt} herido${a.hurt > 1 ? 's' : ''} · carretera cortada · ${Math.min(99, Math.round(a.work / 8 * 100))} % atendido</p><p style="color:var(--muted)">Mientras no se atienda, los coches no pasan, los camiones pasan casi parados y suma daños cada minuto. Una ambulancia lo despeja el doble de rápido que una patrulla.</p>
+    <div class="row"><button class="act" id="pAcc">🚑 Enviar ${G.units.some(u => u.type === 'ambu') ? 'una ambulancia' : 'una patrulla'}</button></div>`;
+  } else if (s.kind === 'cur') {
+    h = `<h3>👀 Curiosos</h3><p>Coche parado en la carretera para mirar el incendio.</p><p style="color:var(--muted)">Estorban a los camiones y, si el fuego llega, pueden chocar al huir. Una patrulla a menos de 100 m los desaloja.</p>
+    <div class="row"><button class="act" id="pCur">🚓 Enviar una patrulla</button></div>`;
   } else if (s.kind === 'town') {
     const t = s.obj, pop = t.houses.reduce((a, h) => a + h.people, 0), lost = t.houses.filter(h => h.state === 'destroyed').length;
     const dep = t.houses.reduce((a, x) => a + (x.dep || 0), 0), wait = t.alarm ? townWaiting(t) : 0;
@@ -1883,23 +2090,39 @@ function renderPanel() {
     if (!a) return log('Las unidades sanitarias están ocupadas.', 'warn');
     if (a.type === 'ambu') taskHeal(a, v); else { hresOrder(a, v.cell, { kind: 'unit', obj: v }); log(`⛑️ ${a.name} va a atender a ${v.name}.`, 'info'); }
   };
-  if (b('pUnblock')) b('pUnblock').onclick = () => { s.obj.task = { type: 'idle' }; s.obj.status = 'En espera'; updateBlocks(); log(`🚧 ${s.obj.name} levanta el corte de carretera.`, 'info'); renderPanel(); };
+  if (b('pUnblock')) b('pUnblock').onclick = () => { const esc = s.obj.task.type === 'escort'; s.obj.task = { type: 'idle' }; s.obj.status = 'En espera'; s.obj.path = []; updateBlocks(); log(esc ? `🚓 ${s.obj.name} deja la escolta.` : `🚧 ${s.obj.name} levanta el corte de carretera.`, 'info'); renderPanel(); };
+  if (b('pEsc')) b('pEsc').onclick = () => { const p = freePoli(s.obj.cell); if (p) taskEscort(p, s.obj); renderPanel(); };
+  if (b('pEscOff')) b('pEscOff').onclick = () => { for (const p of G.units) if (p.task.type === 'escort' && p.task.target === s.obj) { p.task = { type: 'idle' }; p.status = 'En espera'; p.path = []; } renderPanel(); };
+  if (b('pIso')) b('pIso').onclick = () => { const e = elecUnit(s.obj); if (e) elecOrder(e, s.obj); renderPanel(); };
+  if (b('pAcc')) b('pAcc').onclick = () => { const a = s.obj, u = G.units.filter(u => u.type === 'ambu' || u.type === 'poli').sort((p, q) => ((p.type === 'ambu' ? 0 : 25) + octile(p.cell, a.cell)) - ((q.type === 'ambu' ? 0 : 25) + octile(q.cell, a.cell)))[0]; if (!u) return log('No hay ambulancias ni patrullas.', 'warn'); taskAcc(u, a); log(`${ICON[u.type]} ${u.name} va hacia el accidente.`, 'info'); };
+  if (b('pCur')) b('pCur').onclick = () => { const c = Math.round(s.obj.z) * N + Math.round(s.obj.x), p = freePoli(c); if (!p) return log('No hay patrullas.', 'warn'); taskAcc(p, { cell: c }, 'los curiosos'); log(`🚓 ${p.name} va a desalojar a los curiosos.`, 'info'); };
 }
 // etiquetas flotantes
 const labels = [];
+// con un medio seleccionado, tocar la etiqueta de un pueblo, casa o granja es darle la orden (como tocar el mapa allí)
+function addLabel(kind, obj, cls, pos, off) {
+  const el = document.createElement('div'); el.className = 'lbl ' + cls; $('labels').appendChild(el);
+  el.onclick = () => {
+    const su = G.sel && G.sel.kind === 'unit' ? G.sel.obj : null;
+    if (su && !G.over) {
+      if (kind === 'line' && su.type === 'elec') { S.ui('click'); elecOrder(su, obj); return; }
+      if (kind === 'unit' && obj !== su && !obj.air && su.type === 'poli' && obj.type !== 'poli') { S.ui('click'); taskEscort(su, obj); return; }
+      const cell = kind === 'cur' ? Math.round(obj.z) * N + Math.round(obj.x) : obj && obj.cell;
+      if (kind !== 'unit' && cell != null) { S.ui('click'); order(su, { cell, point: cellWorld(cell) }, { kind, obj }); return; }
+      if (kind === 'unit' && obj !== su && !obj.air && (su.type === 'ambu' || su.type === 'hres')) { S.ui('click'); if (su.type === 'ambu') taskHeal(su, obj); else hresOrder(su, obj.cell, { kind: 'unit', obj }); return; }
+    }
+    select({ kind, obj });
+  };
+  labels.push({ el, kind, obj, pos, off });
+}
+function dropLabel(obj) {
+  const k = labels.findIndex(L => L.obj === obj); if (k < 0) return;
+  labels[k].el.remove(); labels.splice(k, 1);
+  if (G.sel && G.sel.obj === obj) select(null);
+}
 function makeLabels() {
   $('labels').innerHTML = ''; labels.length = 0;
-  // con un medio seleccionado, tocar la etiqueta de un pueblo, casa o granja es darle la orden (como tocar el mapa allí)
-  const add = (kind, obj, cls, pos, off) => {
-    const el = document.createElement('div'); el.className = 'lbl ' + cls; $('labels').appendChild(el);
-    el.onclick = () => {
-      const su = G.sel && G.sel.kind === 'unit' ? G.sel.obj : null;
-      if (su && kind !== 'unit' && obj && obj.cell != null && !G.over) { S.ui('click'); order(su, { cell: obj.cell, point: cellWorld(obj.cell) }, { kind, obj }); return; }
-      if (su && kind === 'unit' && obj !== su && !obj.air && (su.type === 'ambu' || su.type === 'hres')) { S.ui('click'); if (su.type === 'ambu') taskHeal(su, obj); else hresOrder(su, obj.cell, { kind: 'unit', obj }); return; }
-      select({ kind, obj });
-    };
-    labels.push({ el, kind, obj, pos, off });
-  };
+  const add = addLabel;
   for (const t of G.towns) add('town', t, 'town', cellWorld(t.cell), 26);
   for (const f of G.farms) add('farm', f, '', f.grp.position, 12);
   for (const h of G.houses) if (h.town < 0) add('house', h, '', h.pos, 10);
@@ -1919,7 +2142,9 @@ function updateLabels() {
     else if (L.kind === 'farm') { const f = L.obj; txt = `${f.kind === 'ovejas' ? '🐑' : '🐄'} ${f.state === 'waiting' ? f.n : f.state === 'dead' ? '💀' : '✅'}`; cls += (f.state !== 'waiting' ? ' gone' : f.warned ? ' danger' : ''); }
     else if (L.kind === 'house') { const ho = L.obj; txt = `🏠 ${ho.people ? '👥 ' + ho.people : '✅'}`; cls += (!ho.people ? ' gone' : ho.warned ? ' danger' : ''); }
     else if (L.kind === 'base') txt = '🚩 Base';
-    else if (L.kind === 'line') { const s = L.obj; txt = `⚡ ${{ on: 'En tensión', off: 'Sin tensión', broken: 'Derribada' }[s.state]}`; cls += s.state === 'on' ? ' danger' : ' gone'; }
+    else if (L.kind === 'line') { const s = L.obj; txt = `⚡ ${{ on: 'En tensión', off: 'Sin tensión', iso: 'Aislada', broken: 'Derribada' }[s.state]}${G.units.some(u => u.task.type === 'elec' && u.task.line === s) ? ' · 👷' : ''}`; cls += s.state === 'on' ? ' danger' : ' gone'; }
+    else if (L.kind === 'acc') { txt = `💥 Accidente · 🤕 ${L.obj.hurt}`; cls += ' alarm'; }
+    else if (L.kind === 'cur') { txt = '👀 Curiosos'; cls += ' danger'; }
     else { const u = L.obj; txt = `${ICON[u.type]} ${u.name}`; cls += u.hp < 45 ? ' alarm' : ''; }
     if (G.sel && G.sel.obj === L.obj && (G.sel.kind === L.kind)) cls += ' sel';
     if (tut && tut.hlObj && tut.hlObj === L.obj) cls += ' hl';
@@ -1979,15 +2204,18 @@ function drawMinimap() {
   mmx.fillStyle = '#fff'; for (const t of G.towns) { mmx.fillRect(cx(t.cell) * s - 4, cz(t.cell) * s - 4, 8, 8); }
   mmx.fillStyle = '#ffcf4d'; for (const f of G.farms) if (f.state === 'waiting') mmx.fillRect(cx(f.cell) * s - 2.5, cz(f.cell) * s - 2.5, 5, 5);
   mmx.lineWidth = 1.5;
-  for (const L of G.lines) { mmx.strokeStyle = L.state === 'on' ? '#ffd23a' : L.state === 'off' ? '#8a8a8a' : '#ff4d5e'; mmx.setLineDash(L.state === 'broken' ? [3, 3] : []); mmx.beginPath(); mmx.moveTo(cx(L.a) * s, cz(L.a) * s); mmx.lineTo(cx(L.b) * s, cz(L.b) * s); mmx.stroke(); }
+  for (const L of G.lines) { mmx.strokeStyle = L.state === 'on' ? '#ffd23a' : L.state === 'off' ? '#8a8a8a' : L.state === 'iso' ? '#5fd0a0' : '#ff4d5e'; mmx.setLineDash(L.state === 'broken' ? [3, 3] : []); mmx.beginPath(); mmx.moveTo(cx(L.a) * s, cz(L.a) * s); mmx.lineTo(cx(L.b) * s, cz(L.b) * s); mmx.stroke(); }
   mmx.setLineDash([]); mmx.lineWidth = 1;
   for (const u of G.units) {
-    mmx.fillStyle = { bomba: '#ff3344', cisterna: '#c9ccd1', ganado: '#44dd77', brigada: '#f08a1c', bulldozer: '#f2b705', heli: '#4dd2ff', avion: '#4dd2ff' }[u.type]; mmx.strokeStyle = '#000'; mmx.beginPath();
+    mmx.fillStyle = { bomba: '#ff3344', cisterna: '#c9ccd1', ganado: '#44dd77', brigada: '#f08a1c', bulldozer: '#f2b705', heli: '#4dd2ff', avion: '#4dd2ff', hres: '#ffd84d', bus: '#4d8dff', ambu: '#ffffff', poli: '#2a5bd8', elec: '#ff9a1f' }[u.type]; mmx.strokeStyle = '#000'; mmx.beginPath();
     if (u.air) { const a = u.heading; mmx.moveTo(u.x * s + Math.sin(a) * 6, u.z * s + Math.cos(a) * 6); mmx.lineTo(u.x * s + Math.sin(a + 2.5) * 5, u.z * s + Math.cos(a + 2.5) * 5); mmx.lineTo(u.x * s + Math.sin(a - 2.5) * 5, u.z * s + Math.cos(a - 2.5) * 5); mmx.closePath(); }
     else mmx.arc(u.x * s, u.z * s, 4, 0, 7);
     mmx.fill(); mmx.stroke();
   }
   mmx.fillStyle = '#7cc8ff'; for (const c of G.cars) mmx.fillRect(c.x * s - 1.5, c.z * s - 1.5, 3, 3);
+  for (const c of G.traffic) { mmx.fillStyle = c.state === 'watch' ? '#ffb347' : '#b8b2a8'; mmx.fillRect(c.x * s - 1, c.z * s - 1, 2.5, 2.5); }
+  mmx.strokeStyle = '#ff3b3b'; mmx.lineWidth = 2; for (const a of G.accs) { const x = a.x * s, z = a.z * s; mmx.beginPath(); mmx.moveTo(x - 4, z - 4); mmx.lineTo(x + 4, z + 4); mmx.moveTo(x + 4, z - 4); mmx.lineTo(x - 4, z + 4); mmx.stroke(); }
+  mmx.lineWidth = 1;
   // vista
   const x = (cam.tx + HALF) / CELL * s, z = (cam.tz + HALF) / CELL * s, r = cam.dist / CELL * s * .5;
   mmx.strokeStyle = 'rgba(255,255,255,.9)'; mmx.lineWidth = 1.5; mmx.beginPath(); mmx.arc(x, z, Math.max(6, r), 0, 7); mmx.stroke();
@@ -2136,7 +2364,8 @@ function updateVisuals(dt, gdt) {
       m.rotation.z = flying ? clamp(-a * 1.2, -.35, .35) : 0; // alabeo en los giros
       if (m.userData.winch) { const L = u.task.type === 'hlift' && u.work > 0 ? 4 + 2.5 * Math.sin(glowTime.value * 1.3) ** 2 : .4; const w = m.userData.winch; w.scale.y += (L - w.scale.y) * Math.min(1, dt * 3); w.position.y = 3 - w.scale.y / 2; }
       lb.visible = Math.floor(glowTime.value * 1.5) % 2 === 0;
-    } else { lb.material.color.setHex(Math.floor(glowTime.value * 4) % 2 ? 0x2a6bff : 0xff2a3a); lb.visible = u.task.type !== 'idle' || u.sprayAt >= 0; }
+    } else if (u.type === 'elec') { lb.material.color.setHex(0xffa020); lb.visible = u.task.type !== 'idle' && Math.floor(glowTime.value * 3) % 2 === 0; } // rotativo ámbar, sin sirena
+    else { lb.material.color.setHex(Math.floor(glowTime.value * 4) % 2 ? 0x2a6bff : 0xff2a3a); lb.visible = u.task.type !== 'idle' || u.sprayAt >= 0; }
   }
   if (G.sel && G.sel.kind === 'unit') { const q = G.sel.obj.mesh.position; selRing.visible = true; selRing.position.set(q.x, hWorld(q.x, q.z) + .6, q.z); } else selRing.visible = false;
   // cortafuegos: líneas planificadas y vista previa
@@ -2156,8 +2385,13 @@ function updateVisuals(dt, gdt) {
   const d = new THREE.Object3D();
   G.wild.forEach((a, k) => { if (!a.alive) { d.position.set(wx(a.x), hWorld(wx(a.x), wx(a.z)), wx(a.z)); d.rotation.set(0, a.h, Math.PI / 2); d.scale.setScalar(1); if (!a.colored) { a.colored = 1; wildMesh.setColorAt(k, new THREE.Color(.04, .035, .03)); wildMesh.instanceColor.needsUpdate = true; } } else { d.position.set(wx(a.x), hWorld(wx(a.x), wx(a.z)), wx(a.z)); d.rotation.set(0, a.h, 0); d.scale.setScalar(1); } d.updateMatrix(); wildMesh.setMatrixAt(k, d.matrix); });
   wildMesh.instanceMatrix.needsUpdate = true;
-  carMesh.count = Math.min(120, G.cars.length);
-  for (let k = 0; k < carMesh.count; k++) { const c = G.cars[k]; const x = wx(c.x), z = wx(c.z); d.position.set(x, hWorld(x, z), z); d.rotation.set(0, c.heading, 0); d.updateMatrix(); carMesh.setMatrixAt(k, d.matrix); }
+  // coches: evacuados, tráfico (se apartan al arcén ante una sirena) y accidentes (volcados de lado)
+  let ci = 0;
+  const putCar = (cx0, cz0, h, off, tilt) => { if (ci >= 120) return; const x = wx(cx0) + Math.cos(h) * off * CELL, z = wx(cz0) - Math.sin(h) * off * CELL; d.position.set(x, hWorld(x, z) + (tilt ? .4 : 0), z); d.rotation.set(0, h, tilt); d.updateMatrix(); carMesh.setMatrixAt(ci++, d.matrix); };
+  for (const c of G.cars) putCar(c.x, c.z, c.heading, 0, 0);
+  for (const c of G.traffic || []) putCar(c.x, c.z, c.heading, c.off, 0);
+  for (const a of G.accs || []) { putCar(a.x, a.z, a.heading + .9, .15, 1.25); putCar(a.x, a.z, a.heading, -.25, 0); if (Math.random() < dt * 2) { const p = cellWorld(a.cell); smoke.add(p.x + rr(-2, 2), p.y + 2, p.z + rr(-2, 2), rr(-.5, .5), rr(1.5, 3), rr(-.5, .5), rr(3, 5), 4, 12, [.25, .24, .24], [.45, .45, .45], .5); } }
+  carMesh.count = ci;
   carMesh.instanceMatrix.needsUpdate = true;
   for (const f of G.farms) { if (f.state !== 'waiting') continue; f.anim.forEach((a, k) => { a.r += (Math.random() - .5) * dt; d.position.set(a.x, 0, a.z); d.rotation.set(0, a.r, 0); d.updateMatrix(); f.mesh.setMatrixAt(k, d.matrix); }); f.mesh.instanceMatrix.needsUpdate = true; }
 }
@@ -2196,11 +2430,12 @@ function newGame(seed, force = false) {
   if (own('kamov')) G.units.push(heavy(newUnit('heli', 'Helicóptero pesado', pad())));
   // servicios de emergencia según el nivel
   const nm = (b, k, n) => n > 1 ? `${b} ${k + 1}` : b;
-  for (const [id, base] of [['ambu', 'Ambulancia'], ['bus', 'Autobús'], ['poli', 'Patrulla']]) { const n = svcCount(id, L.n); for (let k = 0; k < n; k++) G.units.push(newUnit(id, nm(base, k, n), slot())); }
+  for (const [id, base] of [['ambu', 'Ambulancia'], ['bus', 'Autobús'], ['poli', 'Patrulla'], ['elec', 'Equipo eléctrico']]) { const n = svcCount(id, L.n); for (let k = 0; k < n; k++) G.units.push(newUnit(id, nm(base, k, n), slot())); }
   if (svcCount('hres', L.n)) G.units.push(newUnit('hres', 'Helicóptero de rescate', pad()));
   // desde el nivel 6, parte de los vecinos (mayores, gente sin coche) no puede irse sola
   if (L.n >= DEP_LEVEL) { const rg = mulberry32((G.seed + 77) >>> 0); for (const t of G.towns) for (const h of t.houses) h.dep = rg() < .45 ? Math.min(h.people, 1 + Math.floor(rg() * 2)) : 0; }
   for (let k = 0; k < own('avion'); k++) G.units.push(newUnit('avion', own('avion') > 1 ? 'Hidroavión ' + (k + 1) : 'Hidroavión', pad()));
+  initTraffic();
   initWeather();
   buildScene();
   updatePower();
@@ -2454,7 +2689,7 @@ function soundFrame(dt) {
     const moving = !paused && (u.air ? u.task.type !== 'parked' || u.y > H[u.home] + 1.5 : !!(u.path && u.pi < u.path.length));
     S.voice(u.name, u.type === 'ganado' || u.type === 'cisterna' || u.type === 'bus' ? 'camion' : u.type === 'hres' ? 'heli' : u.type, {
       vis: s.vis * (u.air ? 1.1 : .9), pan: s.pan, move: moving, fly: moving,
-      spray: !paused && u.sprayAt >= 0, siren: (u.type === 'bomba' || u.type === 'ambu' || u.type === 'poli') && moving && ['attack', 'rescue', 'refill', 'retreat', 'evac', 'heal', 'block'].includes(u.task.type),
+      spray: !paused && u.sprayAt >= 0, siren: (u.type === 'bomba' || u.type === 'ambu' || u.type === 'poli') && moving && ['attack', 'rescue', 'refill', 'retreat', 'evac', 'heal', 'block', 'escort'].includes(u.task.type),
       work: !paused && u.task.type === 'cut' && !moving,
     });
   }
@@ -2540,6 +2775,7 @@ window.RT = {
     return out;
   },
   get LSEED() { return LSEED; }, get ROADF() { return ROADF; }, taskEvac, taskHeal, taskBlock, hresOrder, townWaiting, townLeft, taskRescue,
+  taskEscort, elecOrder, makeAcc, spawnCar, taskAcc, get DIST() { return DIST; }, get TRAF() { return TRAF; },
   sim(sec) { const t0 = performance.now(); for (let k = 0; k < sec / STEP && !G.over; k++) simStep(STEP); updateVisuals(.05, .05); updateCamera(1); updateLabels(); updateHUD(); drawMinimap(); render(); return Math.round(performance.now() - t0) + ' ms'; },
   frame() { updateCamera(1); updateVisuals(.05, .05); updateLabels(); updateHUD(); layoutTop(); drawMinimap(); updateArrows(); render(); }
 };

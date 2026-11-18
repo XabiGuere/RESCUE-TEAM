@@ -3,6 +3,16 @@
 Nombre definitivo: **Línea de Fuego**. El nombre provisional era «Rescue Team», y así se sigue llamando el repositorio de GitHub (RESCUE-TEAM).
 Juego 3D de extinción de incendios forestales en el navegador, hecho con Three.js 0.160.0 (se carga desde cdn.jsdelivr). Todo el texto del juego y las respuestas al usuario van **en castellano**.
 
+## Dónde se juega
+- **Web pública (GitHub Pages):** https://xabiguere.github.io/RESCUE-TEAM/
+  - Se sirve desde el repositorio público XabiGuere/RESCUE-TEAM, rama `main`, carpeta raíz.
+  - Para actualizarla, el usuario arrastra los archivos cambiados a la página de subida de GitHub. La web se actualiza sola en uno o dos minutos.
+- **App instalable (PWA):** `manifest.webmanifest`, los iconos `icono-192.png`, `icono-512.png`, `apple-touch-icon.png` y `favicon.png`, y `sw.js`.
+  - `sw.js` guarda el juego y Three.js para jugar sin conexión. Los archivos del juego van primero por red; Three.js se sirve primero desde la copia guardada.
+  - Si se añade un archivo nuevo al juego, hay que incluirlo en `CORE` de `sw.js`. Para forzar que se borre todo lo guardado, se sube la versión de `CACHE`.
+  - Los iconos se generan con un script de PowerShell (System.Drawing): una llama sobre montes oscuros.
+- Antes también se publicaba como artefacto de Claude. El progreso (XP) se guarda por separado en cada dirección.
+
 ## Cómo trabajar con el usuario
 - **Preguntar antes de construir.** Proponer ideas, preguntar y no programar hasta que diga «adelante». Mejor avanzar por fases pequeñas y validarlas con él.
 - Quiere gráficos lo más realistas posible y jugar solo con el ratón (clic, arrastrar el mapa, girar la cámara).
@@ -158,6 +168,27 @@ No se compran: se incorporan solos según el nivel (`SERVICES`, `svcCount`). Tam
 - **Etiquetas:** con un medio seleccionado, tocar la etiqueta de un pueblo, casa o granja da la orden.
 - **Sirenas:** la ambulancia tiene un bitonal agudo y la policía un aullido (`sonido.js`).
 
+## Tráfico, escoltas e ingenieros (18/11/2026)
+- **Tráfico civil** (`G.traffic`, sección «Tráfico civil» de `juego.js`):
+  - Coches que van entre pueblos y salidas por rutas fijas (`G.troutes`). Hay `4 + 9p` coches, 4 más si hay policía.
+  - Usa su propio azar (`RTF`), así que no altera el fuego calibrado de cada nivel.
+  - Evitan el fuego, los cortes de la policía y los accidentes; si no pueden pasar, rodean o dan la vuelta. No van a pueblos con alarma.
+  - Si el fuego alcanza un coche particular, los ocupantes huyen a pie: 60 mil € de daños, no se pierde la partida.
+- **Atascos** (`trafficFactor`, llamado en `moveUnit`):
+  - Los vehículos con sirena (`SIREN`: autobombas, cisterna, ambulancia, policía, brigada y bulldozer) no se frenan, y los coches se apartan al arcén a su paso.
+  - El autobús, el camión de ganado y el equipo eléctrico no adelantan al coche que llevan delante (×0,5, ×0,2 si está parado) y se frenan con la densidad (`TRAF`).
+  - Medido en el nivel 30: un viaje largo tarda un 20–30 % menos con escolta.
+- **Escolta** (tarea `escort` de la patrulla): la patrulla va 3 celdas por delante del escoltado; a menos de 3 celdas le marca `escUntil` y el tráfico se aparta. Se da seleccionando la patrulla y tocando el vehículo, o con «Pedir escolta policial».
+- **Curiosos** (solo con policía): un coche para a mirar el fuego (a 6–11 celdas) y estorba. Una patrulla a 3 celdas lo desaloja. Si el fuego llega a 3 celdas, huye; la mitad de las veces choca.
+- **Accidentes** (`G.accs`, `G.accMask`, solo con ambulancia o policía):
+  - Probabilidad mayor cerca del humo, como mucho 2 a la vez y al menos 120 s entre uno y otro.
+  - Cortan la carretera a los coches y los camiones pasan a ×0,25. Suman 300 € por herido y segundo.
+  - Se despejan con una ambulancia (8 s) o una patrulla (16 s) parada a 2 celdas. Si llega el fuego: 90 mil €.
+- **Equipo eléctrico** (`elec`, niveles 4 y 45), tarea `elec`:
+  - Aislar un tramo cuesta 5 mil € y tarda 12 s: estado `iso`, sin corriente, y los pueblos siguen con luz (`s.bypass`).
+  - Reconectar tarda 6 s. Reparar una línea derribada cuesta 20 mil € y tarda 25 s, cuando el fuego está a 4 celdas o más de la línea.
+  - No trabaja con el fuego a menos de 5 celdas. El corte general de 50 mil € sigue disponible.
+
 ## Equilibrio (16/11/2026)
 Calibrado con partidas automáticas: un bot que ataca el fuego más cercano a los pueblos, activa alarmas y saca casas y ganado.
 - **`TUNE`:** K .1, W .11, spot .6. Valores `k` por nivel: .95 / .95 / .78 / .75 / .62.
@@ -173,3 +204,4 @@ Calibrado con partidas automáticas: un bot que ataca el fuego más cercano a lo
 
 ## Pendiente o por revisar
 - No se ha medido el rendimiento (FPS) en otros equipos.
+- El nivel 6 (semilla 152243) se apaga solo hacia los 145 s de partida sin hacer nada (visto el 18/11/2026; no lo causa el tráfico).
