@@ -72,6 +72,59 @@ Juego 3D de extinción de incendios forestales en el navegador, hecho con Three.
   - La interfaz compacta está en `@media (max-width:640px)` de index.html.
   - En móvil la partida empieza en calidad media.
 
+### Mejora gráfica, bloque 1: terreno y luz (18/11/2026)
+Plan pactado con el usuario, en este orden: 1) terreno y luz, 2) fuego y humo, 3) vegetación, 4) vehículos, pueblos y **animales** (ahora parecen cubos). Al acabar cada bloque se le enseña el antes y el después.
+- **Terreno (`TERRAIN_COLOR`):** la consulta a la rejilla se deforma con ruido (`wc`), así que las zonas tienen bordes orgánicos. La textura `bioTex` lleva R bosque, G cultivo, B roca y A relieve (hondonada o loma, calculado con medias de `H`).
+  - Capas del sombreador: pasto con briznas de cerca, suelo de bosque, surcos en los cultivos y roca con cárcavas ladera abajo, vetas y líquenes.
+  - Las hondonadas se oscurecen. Lo quemado tiene ceniza con vetas y un borde chamuscado (`burntAt`, que no cuenta el agua).
+  - `makeBreak` borra el bosque de `bioTex`.
+- **Fuera del mapa (`buildSkirt`):** anillos de terreno hasta `SKIRT` = 1400 que empiezan con los mismos vértices que el borde, así que no hay costura. Lejos aparecen montes.
+  - La vegetación del borde continúa unos 100 m hacia fuera, con los modelos detallados cerca y los simples lejos. En calidad media hay un 45 % menos de árboles.
+  - El plano del agua llega también fuera. Usa su propio generador aleatorio, así que no cambia la partida.
+- **Atmósfera (`atmo(m)`):** reemplaza la niebla de cada material. Hacia el sol la niebla toma su color, y hay neblina en los valles (`ATM.uMist`) al amanecer, al anochecer y con lluvia.
+  - Se aplica a todo lo que crea `buildScene`. Ojo: guarda la clave de programa anterior (`customProgramCacheKey`) para no mezclar sombreadores.
+- **Cielo:** nubes altas que se mueven y resplandor del horizonte del lado del sol (`uDusk`).
+- **Luz:** sol dorado al amanecer y al atardecer, y sombras suaves (`PCFSoftShadowMap`) en calidad alta. El pase `grade` va tras `OutputPass` y aplica saturación, curva en S, tono cálido con humo o atardecer, y viñeta.
+- **Rendimiento:** medido con el panel oculto, cada fotograma tarda unos 40–47 ms frente a 30–44 ms antes (incluye etiquetas y minimapa). Falta medirlo con la ventana visible y en un móvil.
+
+### Mejora gráfica, bloque 2: fuego y humo (18/11/2026)
+- **Láminas de llamas (`flameCards`):** cada celda que arde levanta de 2 a 3 láminas que miran a la cámara. Se rehacen en cada fotograma desde `burning`, con un tope de `FLAME_MAX` = 3200 láminas.
+  - El sombreador (`flameU`) hace subir lenguas con la textura de ruido `detTex`, que tiene 4, 8 y 64 celdas por vuelta en R, G y B. Con escalas grandes salen rayas finas, así que hay que mantenerlas pequeñas.
+  - Las llamas se inclinan con el viento y se desvanecen con la niebla. Las de árbol son más altas (21) que las de matorral (8) y las de pasto (3,6).
+- **Partículas sueltas:** quedan menos lenguas que antes, algo más altas, y más chispas, que el viento empuja.
+- **Humo:** columnas más altas y grandes, 7000 como máximo. Con `windH`, el viento crece con la altura sobre el punto donde nació cada bocanada (`y0`), así que la columna se tumba.
+  - Aparece despacio (`fin` = 0,3) para no tapar las llamas. Es oscuro en el bosque y blanquecino en el pasto. De noche es tenue y anaranjado.
+  - Los bordes cuadrados de las partículas se difuminan.
+- **Copas que arden:** el color de instancia lleva el rojo por encima de 1,6 (`treeState`). `swayMaterial` lo detecta (`vHot`), ennegrece la copa y le añade brasas que suben con el ruido. Brillan más de noche (`uGlowK`).
+- **Luces del fuego:** se reparten por el frente, eligiendo la celda más alejada de las demás. Se mueven suave y titilan.
+- **Azar visual:** las partículas usan `vr` (`Math.random`) en vez de `rr`, así que lo que se dibuja ya no cambia el azar de la partida. `fireStep` sigue igual.
+- **Rendimiento:** con el panel oculto, unos 54 ms por fotograma con 405 celdas ardiendo, frente a 55 ms con 607 en el bloque 1. Es un coste parecido.
+
+### Mejora gráfica, bloque 3: vegetación (18/11/2026)
+- **Pinos:** `pineGeo(false)` es un pino de copa cónica con 6 pisos en estrella (`starTier`): puntas caídas y huecos entre ellas. `pineGeo(true)`, el antiguo «pine2», es ahora un pino piñonero con tronco alto y copa en sombrilla. `pineLo(umbrella)` tiene versiones simples de los dos.
+- **Robles:** bultos con más caras solo en los grandes. Las normales salen del centro de la copa, que así se ilumina como un solo volumen, y el interior es más oscuro. Lleva una rama más. El matorral tiene 4 bultos.
+- **Sombreador de hojas (`swayMaterial`):**
+  - `vLeaf` distingue hoja de corteza por el color del vértice (verde mayor que rojo).
+  - Las hojas tienen racimos con claros, huecos y hojas sueltas, sacados de `detTex` con la posición local más la de la instancia (`vLeafP`).
+  - Solo con `NEARLEAF` (`swayMaterial(r, true)`), el contorno de las copas se deshilacha con `discard`.
+  - De lejos, el material `far` no lleva texturas ni `discard`. El nivel de detalle cambia geometría y material (`userData.mhi` y `mlo`) y su distancia baja a 300 en calidad alta y 210 en media.
+- **Quemados:** `treeState` pone el azul de instancia por encima de 1,6 y el sombreador deja tronco y restos negros, recortando la copa con `discard` (solo cerca). Las sombras siguen siendo de la copa entera; queda pendiente.
+- **Rocas sueltas (`buildRocks`):** bloques en los roquedos (la mitad de las celdas), en las laderas fuertes y algunas en el pasto. Usan su propio generador aleatorio.
+- **Rendimiento (panel oculto, nivel 30):** los árboles cuestan unos 7 ms de lejos y 17 ms de cerca, frente a 4 y 13 ms antes.
+
+### Mejora gráfica, bloque 4: animales, vehículos y pueblos (18/11/2026)
+- **Animales (`sheepGeo`, `cowGeo`, `deerGeo`, `boarGeo`):** modelos con cuerpo, cabeza y patas que miran hacia +z. Llevan el color en los vértices y la instancia los tiñe (negro si mueren).
+  - Las vacas tienen manchas y cuernos, las ovejas lana con cabeza oscura, los ciervos cornamenta y rabo blanco, y los jabalíes hocico y colmillos.
+  - `wildMesh` es ahora un grupo con dos `InstancedMesh`. Cada animal guarda su malla y su índice (`a.im`, `a.ii`) y brinca al correr.
+  - En las granjas, los animales pisan el terreno (`a.y`).
+- **Granjas:** cerca de postes con dos travesaños que siguen el terreno, y establo con tejado a dos aguas, esquinas blancas y portón. Se quitan los árboles dentro del corral con `clearTrees`; es solo visual, y el monte sigue ardiendo igual.
+- **Coches civiles (`carGeo`):** carrocería del color de la instancia, cabina con cristales, ruedas, faros y pilotos.
+- **Vehículos (`makeVehicle`):** las cajas grandes pasan a `softBox` (aristas redondeadas). Se añaden faros, pilotos, parachoques, espejos y ruedas con llanta. Los materiales llevan menos metal para que el techo blanco no deslumbre.
+- **Casas (`houseGeo`, `roofGeo`, `winPanes`):** zócalo, puerta, ventanas con alféizar, tejado a dos aguas (`gableGeo`) y chimenea. Algunas tienen dos plantas, y los tejados varían de tono (hay alguna pizarra). De noche se encienden los cristales.
+- **Pueblos:** árboles y matas junto a las casas, con su propio azar. Se registran en `trees` y `cellTrees`, así que arden con su celda.
+- **Parque de bomberos:** nave con tres portones, franjas rojas y torre de mangueras. Se coloca en un hueco seco y llano junto al aparcamiento, sin agua ni carretera, y quita los árboles que la atraviesan.
+- **Comprobado:** con los niveles 1, 60, 100 y 60, en ese orden, arden las mismas celdas que con el bloque 3. Nada de esto cambia el azar de la partida.
+
 ## Fases
 1. ✅ Mundo, fuego, clima, autobombas y cámara.
 2. ✅ Pueblos y evacuación, casas aisladas, granjas y ganado, fauna salvaje, noche y lluvia.
